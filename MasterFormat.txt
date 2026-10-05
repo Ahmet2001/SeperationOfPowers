@@ -1,0 +1,1608 @@
+Mercan Yasama – Yürütme – Yargı
+
+Bu proje, Mercan tool-use / agent sistemini üç ayrı mantıksal role ayırarak geliştirmek için oluşturulmuştur:
+
+1. Yasama — Decision Maker / Router
+2. Yürütme — Argument Filler / Tool Caller
+3. Yargı — Response Composer
+
+Amaç, tek bir modelin aynı anda tool seçme, tool argümanı üretme ve sonucu kullanıcıya anlatma görevlerini üstlenmesi yerine bu sorumlulukları açık biçimde ayırmaktır.
+
+Bu repository aynı zamanda üç modülün:
+
+* aynı veri sözleşmelerini kullanmasını,
+* aynı action ontology üzerinden konuşmasını,
+* aynı observation/state formatını paylaşmasını,
+* bağımsız eğitilebilmesini,
+* TRUBA üzerinde ortak dataset ve checkpoint düzeniyle çalışabilmesini,
+* runtime sırasında birbirleriyle uyumlu kalmasını
+
+sağlamak için ortak proje sözleşmesi görevi görür.
+
+⸻
+
+1. Temel Mimari
+
+Mercan agent runtime akışı:
+
+USER
+  │
+  ▼
+YASAMA
+  │
+  │ selected action
+  ▼
+YÜRÜTME
+  │
+  │ JSON arguments
+  ▼
+VALIDATOR / POLICY
+  │
+  ▼
+EXECUTOR
+  │
+  │ observation
+  ▼
+YASAMA
+  │
+  ├── yeni action ──→ YÜRÜTME
+  │
+  └── FINISH
+        │
+        ▼
+      YARGI
+        │
+        ▼
+       USER
+
+Sistem statik bir plan üretmek zorunda değildir.
+
+Her tool execution sonrasında oluşan yeni observation tekrar Yasama’ya verilir.
+
+Dolayısıyla sistem:
+
+plan once → execute everything
+
+yaklaşımı yerine:
+
+decide
+→ execute
+→ observe
+→ decide again
+
+şeklinde çalışan reaktif bir agent loop kullanır.
+
+⸻
+
+2. Üç Modülün Kesin Görevleri
+
+Bu ayrım proje boyunca korunmalıdır.
+
+⸻
+
+2.1 Yasama
+
+Yasama sistemin karar vericisidir.
+
+Görevi:
+
+user request
++ conversation history
++ current state
++ last observation
+→ next action
+
+Yasama yalnızca hangi action’ın yapılması gerektiğini seçer.
+
+Argüman üretmez.
+
+Doğru:
+
+FILE_CREATE
+
+Yanlış:
+
+FILE_CREATE(path="notes.txt", content="Merhaba")
+
+Argüman üretmek Yürütme’nin görevidir.
+
+⸻
+
+2.2 Yürütme
+
+Yürütme, Yasama tarafından seçilmiş action’ı gerçek bir tool çağrısına dönüştürür.
+
+Girdi:
+
+user request
++ conversation history
++ state
++ selected action
++ tool schema
++ placeholder
+
+Çıktı:
+
+{
+  "path": "notes.txt",
+  "content": "Merhaba"
+}
+
+Yürütme’nin görevi:
+
+ACTION
+→ doğru JSON arguments
+
+üretmektir.
+
+Yürütme final kullanıcı cevabı üretmez.
+
+⸻
+
+2.3 Yargı
+
+Yargı yalnız gerçek executor sonuçlarına bakarak kullanıcıya final cevap üretir.
+
+Girdi:
+
+original/current user request
++ relevant conversation history
++ real observations
+
+Çıktı:
+
+notes.txt dosyası oluşturuldu ve içine "Merhaba" yazıldı.
+
+Yargı’nın temel kuralı:
+
+Observation içinde bulunmayan hiçbir başarı, sonuç veya bilgi uydurulmamalıdır.
+
+Executor hata döndürdüyse Yargı başarı iddiasında bulunamaz.
+
+⸻
+
+3. Canonical Yasama Action Ontology
+
+Production Yasama router için hedeflenen kapalı action space 16 sınıftır:
+
+RESPOND
+WEB_SEARCH
+WEB_OPEN
+FILE_READ
+FILE_SEARCH
+FILE_LIST
+FILE_CREATE
+FILE_EDIT
+FILE_DELETE
+FILE_MOVE
+CODE_EXECUTE
+SHELL_EXECUTE
+DOWNLOAD
+SEND_MAIL
+ASK_CLARIFICATION
+FINISH
+
+Bu ontology Yasama’nın production interface’idir.
+
+⸻
+
+4. Source Action ve Canonical Action Ayrımı
+
+Datasetlerde geçen her source tool adı zorla 16 canonical action’dan birine çevrilmemelidir.
+
+Güvenli alias örnekleri:
+
+web_search       → WEB_SEARCH
+read_file        → FILE_READ
+edit_file        → FILE_EDIT
+list_directory   → FILE_LIST
+search_code      → FILE_SEARCH
+run_command      → SHELL_EXECUTE
+
+Ancak semantic olarak birebir olmayan mapping yapılmamalıdır.
+
+Örnek:
+
+REQUEST_CONFIRMATION ≠ ASK_CLARIFICATION
+send_message         ≠ SEND_MAIL
+write_file           ≠ otomatik FILE_CREATE
+calculator           ≠ CODE_EXECUTE
+
+Bu yüzden datasetlerde şu alanların ayrı tutulması tercih edilir:
+
+source_action
+mapped_action
+ontology_action
+mapping_status
+preserve_original
+
+Örneğin:
+
+{
+  "source_action": "write_file",
+  "mapped_action": null,
+  "mapping_status": "unmapped_preserved",
+  "preserve_original": true
+}
+
+Kaynak semantiği korunmalıdır.
+
+⸻
+
+5. Ortak Observation Contract
+
+Executor çıktıları üç modül için ortak bir formata normalize edilmelidir.
+
+Minimum canonical observation:
+
+{
+  "action": "FILE_CREATE",
+  "data": {},
+  "status": "success",
+  "error": null
+}
+
+Alanlar:
+
+action
+→ hangi action/tool çalıştırıldı
+data
+→ executor'ın gerçek output payload'ı
+status
+→ success | error
+error
+→ hata yoksa null, hata varsa hata bilgisi
+
+Ek provenance alanları bulunabilir:
+
+tool_call_id
+provider
+source
+execution_id
+
+Ancak temel dört alanın semantiği değiştirilmemelidir.
+
+⸻
+
+6. Ortak State Contract
+
+Minimum state:
+
+{
+  "completed_actions": [],
+  "last_observation": null
+}
+
+Daha gelişmiş kullanımda:
+
+{
+  "completed_actions": [],
+  "last_observation": null,
+  "recent_observations": [],
+  "step_index": 0,
+  "turn_index": 0
+}
+
+kullanılabilir.
+
+Önemli kural:
+
+Aynı field üç farklı modülde farklı anlama gelmemelidir.
+
+⸻
+
+7. Yasama Training Formatı
+
+Conceptual input:
+
+user_prompt
++ conversation_history
++ state
+
+Target:
+
+target_action
+
+Kod açısından:
+
+target = row["target_action"]
+
+Örneğin:
+
+USER:
+notes.txt dosyasını oluştur ve içine Merhaba yaz.
+STATE:
+{
+  "completed_actions": [],
+  "last_observation": null
+}
+TARGET:
+FILE_CREATE
+
+Tool execution sonrası ikinci Yasama örneği:
+
+USER:
+notes.txt dosyasını oluştur ve içine Merhaba yaz.
+STATE:
+{
+  "completed_actions": ["FILE_CREATE"],
+  "last_observation": {
+    "action": "FILE_CREATE",
+    "data": {
+      "path": "notes.txt"
+    },
+    "status": "success",
+    "error": null
+  }
+}
+TARGET:
+FINISH
+
+Yasama’nın öğrenmesi gereken problem yalnız intent classification değildir.
+
+Aynı zamanda:
+
+state → next action
+
+problemidir.
+
+⸻
+
+8. Yürütme Training Formatı
+
+Conceptual input:
+
+user_prompt
++ conversation_history
++ state
++ action
++ tool schema
++ placeholder
+
+Target:
+
+target_arguments
+
+Kod:
+
+target = json.dumps(
+    row["target_arguments"],
+    ensure_ascii=False
+)
+
+Örnek:
+
+USER:
+notes.txt dosyasını oluştur ve içine Merhaba yaz.
+ACTION:
+FILE_CREATE
+PLACEHOLDER:
+{
+  "path": null,
+  "content": null
+}
+
+Target:
+
+{
+  "path": "notes.txt",
+  "content": "Merhaba"
+}
+
+Burada JSON gerçekten model output’udur.
+
+⸻
+
+9. Placeholder Politikası
+
+Yürütme modeline yalnız tool schema vermek yerine gerektiğinde placeholder JSON verilebilir.
+
+Örneğin:
+
+{
+  "path": null,
+  "content": null
+}
+
+Modelin görevi:
+
+yeni JSON structure icat etmek
+
+değil,
+
+verilen structure içindeki doğru alanları doldurmak
+
+olur.
+
+Bu özellikle küçük modellerde:
+
+* ekstra key üretme,
+* kapanmayan JSON,
+* tekrar eden JSON,
+* schema dışı alan,
+* yanlış key spelling
+
+problemlerini azaltabilir.
+
+⸻
+
+10. Yargı Training Formatı
+
+Yargı için conceptual input:
+
+user_prompt
++ relevant conversation_history
++ real observations
+
+Target:
+
+response
+
+Kod:
+
+target = row["response"]
+
+Bu nokta özellikle önemlidir.
+
+Dataset disk üzerinde şu şekilde tutulabilir:
+
+{
+  "user_prompt": "...",
+  "observations": [],
+  "response": "Final kullanıcı cevabı."
+}
+
+Ancak model target’ı:
+
+Final kullanıcı cevabı.
+
+olmalıdır.
+
+Şu şekilde olmamalıdır:
+
+{
+  "response": "Final kullanıcı cevabı."
+}
+
+Çünkü assistant span başladıktan sonra üretilen bütün tokenlar gerçek final kullanıcı cevabıdır.
+
+⸻
+
+11. Yargı ChatML Örneği
+
+<|im_start|>system
+Sen Yargı modelisin. Kullanıcının isteğini ve gerçek araç gözlemlerini
+kullanarak nihai cevabı üret. Gözlemlerde bulunmayan bilgi uydurma.
+<|im_end|>
+<|im_start|>user
+notes.txt dosyasını oluştur ve içine Merhaba yaz.
+<tool_observations>
+[
+  {
+    "action": "FILE_CREATE",
+    "data": {
+      "path": "notes.txt",
+      "content": "Merhaba"
+    },
+    "status": "success",
+    "error": null
+  }
+]
+</tool_observations>
+<|im_end|>
+<|im_start|>assistant
+notes.txt dosyası oluşturuldu ve içine "Merhaba" yazıldı.
+<|im_end|>
+
+Training sırasında:
+
+system             → MASK
+user               → MASK
+observation        → MASK
+assistant prefix   → MASK
+assistant response → LOSS
+assistant end      → LOSS
+
+Prompt tokenları target değildir.
+
+⸻
+
+12. Tool Role Kullanımı
+
+Modelin tokenizer/chat-template’i yalnızca:
+
+system
+user
+assistant
+
+rollerini destekliyorsa yeni bir tool role zorla eklenmemelidir.
+
+Observation şu şekilde user/context içerisine gömülebilir:
+
+<tool_observations>
+...
+</tool_observations>
+
+Chat-template değişiklikleri üç modülün birlikte kullandığı ortak contract’ın parçası olmalıdır.
+
+⸻
+
+13. Web Search Data Politikası
+
+Büyük arac_kullanimi web-search verisinde bazı observation’lar çok fazla search result içermektedir.
+
+Aktif compaction politikası:
+
+web_search results
+→ source ranking korunur
+→ en alakalı ilk 3 sonuç tutulur
+
+Örneğin:
+
+[1]
+[2]
+[3]
+
+kalır.
+
+[4]...[10]
+
+training context’ine alınmaz.
+
+Amaç:
+
+* context window’u gereksiz şişirmemek,
+* en alakalı retrieval kanıtlarını korumak,
+* Yargı’nın gereksiz snippet gürültüsü üzerinde eğitim almamasını sağlamak.
+
+Bu işlem yalnız observation input’una uygulanır.
+
+Final response target değiştirilmez.
+
+⸻
+
+14. Calculator Data Politikası
+
+Calculator ailesinde kaynak function isimleri korunmalıdır.
+
+Örnekler:
+
+calc
+calculator
+calculate_discount
+calculate_bmi
+calculate_median
+calculate_area
+calculate_tip
+calculate_tax
+calculate_interest
+...
+
+Bunların tamamı otomatik olarak:
+
+CODE_EXECUTE
+
+action’ına map edilmemelidir.
+
+Calculator source schema’sı Yürütme için değerlidir.
+
+Observation result da değiştirilmeden korunmalıdır.
+
+Örnek:
+
+{
+  "action": "calculate_median",
+  "data": {
+    "median": 5
+  },
+  "status": "success",
+  "error": null
+}
+
+Calculator result’larında truncation yapılmamalıdır.
+
+⸻
+
+15. Mevcut TRUBA Çalışma Alanı
+
+Ana çalışma dizini:
+
+/arf/scratch/egitimg16/nedolm_0p8b/tooluse_inspect/yasama-yurutme-yargi
+
+Mevcut genel yapı:
+
+yasama-yurutme-yargi/
+│
+├── README.md
+├── PROJECT_MASTER.md
+├── YASAMA_YURUTME_YARGI_MIMARISI.md
+├── stats.json
+│
+├── master/
+├── yasama/
+├── yurutme/
+├── yargi/
+│
+├── sources/
+├── ontology/
+│
+├── combined_v2/
+├── combined_v2_gz/
+├── combined_v2_sharded/
+│
+├── EXPANSION_MANIFEST_V2.json
+├── COMPRESSION_REPORT_V2.json
+├── PACKAGE_REPORT_V2.json
+│
+├── GEMINI_DISTIL_MANIFEST_V1.json
+├── GEMINI_DISTIL_VERIFY_V1.json
+│
+├── HUNTER_TR_MANIFEST_V1.json
+└── HUNTER_TR_VERIFY_V1.json
+
+⸻
+
+16. master/
+
+master/ trajectory-level kaynak görünümüdür.
+
+Mevcut dosyalar:
+
+master/
+├── train.jsonl
+├── validation.jsonl
+├── test.jsonl
+└── hunter_tr.jsonl
+
+Legacy ToolCall-TR seed:
+
+train        140
+validation    20
+test          40
+
+Toplam:
+
+200 trajectory
+
+Hunter:
+
+1,247 trajectory
+29,374 tool call
+
+Önemli:
+
+master/ şu anda tüm aktif datasetlerin tek birleşik authoritative master’ı değildir.
+
+⸻
+
+17. Kökteki Role-specific Datasetler
+
+Yasama
+
+yasama/
+├── train.jsonl
+├── validation.jsonl
+├── test.jsonl
+├── distil_data.jsonl
+└── hunter_tr.jsonl
+
+Yürütme
+
+yurutme/
+├── train.jsonl
+├── validation.jsonl
+├── test.jsonl
+├── distil_data.jsonl
+└── hunter_tr.jsonl
+
+Yargı
+
+yargi/
+├── train.jsonl
+├── validation.jsonl
+├── test.jsonl
+├── distil_data.jsonl
+└── hunter_tr.jsonl
+
+Buradaki:
+
+train / validation / test
+
+dosyaları legacy seed datasetidir.
+
+distil_data.jsonl Gemini distillation datasıdır.
+
+hunter_tr.jsonl Hunter translated datasıdır.
+
+Bunlar tek bir birleşik train dosyası değildir.
+
+⸻
+
+18. Gemini Distillation
+
+Manifest:
+
+GEMINI_DISTIL_MANIFEST_V1.json
+GEMINI_DISTIL_VERIFY_V1.json
+
+Role-specific kayıt sayıları:
+
+Yasama    2,814
+Yürütme   1,779
+Yargı     1,035
+
+Gemini distillation source action’ları mevcut canonical ontology ile büyük ölçüde doğrudan uyumludur.
+
+⸻
+
+19. Hunter TR
+
+Kaynak:
+
+TeichAI/Hunter-Alpha-Coding-Agent-SFT
+
+Türkçeleştirme:
+
+nmsofficial/NedoTranslator
+
+Boyut:
+
+master trajectories    1,247
+tool calls             29,374
+Yasama rows            30,621
+Yürütme rows           29,374
+Yargı rows              1,243
+
+Source actions:
+
+write_file        22,274
+run_command        3,110
+list_directory     2,465
+edit_file            840
+read_file            622
+web_search             33
+search_code             30
+
+Mapping:
+
+read_file       → FILE_READ
+edit_file       → FILE_EDIT
+list_directory  → FILE_LIST
+search_code     → FILE_SEARCH
+run_command     → SHELL_EXECUTE
+web_search      → WEB_SEARCH
+
+write_file otomatik map edilmez.
+
+⸻
+
+20. sources/
+
+Kaynak normalize datasetleri:
+
+sources/
+├── hermes_tr/
+├── mobile_fc_tr/
+├── atasoglu_tool10k/
+└── itu_tool_tr/
+
+Her source kendi içinde:
+
+yasama/
+yurutme/
+yargi/
+
+görünümlerine ayrılmıştır.
+
+Burası primarily:
+
+provenance
+audit
+rebuild
+source-level debugging
+
+içindir.
+
+⸻
+
+21. combined_v2/
+
+combined_v2 şu kaynaklardan oluşturulmuş eski birleşik snapshot’tır:
+
+legacy ToolCall-TR
++ hermes_tr
++ mobile_fc_tr
++ atasoglu_tool10k
++ itu_tool_tr
+
+Toplam:
+
+YASAMA
+train        182,123
+validation     9,913
+test          10,880
+YÜRÜTME
+train        153,697
+validation     8,263
+test           9,052
+YARGI
+train         33,339
+validation     1,734
+test           1,876
+
+Split overlap:
+
+train ↔ validation = 0
+train ↔ test       = 0
+validation ↔ test  = 0
+
+Ancak:
+
+combined_v2 günümüzdeki full active dataset değildir.
+
+Sonradan eklenen:
+
+Gemini distillation
+Hunter TR
+arac_kullanimi
+
+datasının tamamını içermez.
+
+⸻
+
+22. combined_v2_gz/
+
+Bu klasör yeni bir dataset değildir.
+
+combined_v2
+→ gzip
+→ combined_v2_gz
+
+İçerik aynı dataset snapshot’ıdır.
+
+Yalnız storage biçimi farklıdır.
+
+⸻
+
+23. combined_v2_sharded/
+
+Bu da yeni bir dataset değildir.
+
+combined_v2
+→ gzip
+→ sharding
+
+ile oluşturulmuş storage-friendly formattır.
+
+Özellikle büyük train dosyalarının tek dosya yerine birçok shard halinde okunmasını sağlar.
+
+⸻
+
+24. ontology/
+
+Ontology ve mapping artefactları:
+
+ontology/
+├── YASAMA_ACTION_INVENTORY_V2.json
+├── YASAMA_ACTION_INVENTORY_V2.tsv
+├── YASAMA_16CLASS_MAPPING_V1.json
+├── YASAMA_16CLASS_MAPPING_V1.csv
+├── YASAMA_16CLASS_MAPPING_V1_SUMMARY.json
+└── YASAMA_16CLASS_MAPPING_V1_VERIFY.json
+
+Mevcut mapping snapshot’ı eski combined_v2 Yasama datasına göre üretilmiştir.
+
+Bu yüzden ileride full shared dataset oluşturulduğunda global action inventory ve mapping yeniden üretilmelidir.
+
+⸻
+
+25. Büyük arac_kullanimi Datası
+
+Raw source:
+
+MercanAI/turkish-sft-master/7_arac_kullanimi
+
+TRUBA çalışma alanı:
+
+/arf/scratch/egitimg16/nedolm_0p8b/tooluse_inspect/arac_kullanimi_v1/
+
+Yaklaşık:
+
+676k trajectory
+733k+ tool call
+
+içerir.
+
+Ağırlıklı kategoriler:
+
+web_search
+calculator
+
+Bu source şu anda project root’taki combined_v2 içerisine entegre değildir.
+
+Dolayısıyla ileride oluşturulacak unified shared dataset’e ayrıca dahil edilmelidir.
+
+⸻
+
+26. Şu Anda Nelerin Full Dataset Kabul Edilmemesi Gerekiyor
+
+Aşağıdakiler tek başlarına full current train dataset değildir:
+
+yasama/train.jsonl
+yurutme/train.jsonl
+yargi/train.jsonl
+combined_v2/*
+combined_v2_gz/*
+combined_v2_sharded/*
+
+Yeni training script’leri bu dosyalardan herhangi birini rastgele:
+
+FULL_DATASET
+
+olarak kabul etmemelidir.
+
+⸻
+
+27. Single Source of Truth
+
+Projenin hedef veri organizasyonu:
+
+shared_data/
+├── manifest.json
+│
+├── contracts/
+│   ├── action_ontology.json
+│   ├── observation_schema.json
+│   ├── state_schema.json
+│   └── tool_registry.json
+│
+├── yasama/
+│   ├── train.*
+│   ├── validation.*
+│   └── test.*
+│
+├── yurutme/
+│   ├── train.*
+│   ├── validation.*
+│   └── test.*
+│
+└── yargi/
+    ├── train.*
+    ├── validation.*
+    └── test.*
+
+Bu dizin oluşturulduğunda:
+
+shared_data/
+
+tek authoritative training source olacaktır.
+
+⸻
+
+28. Shared Manifest
+
+shared_data/manifest.json minimum olarak şunları içermelidir:
+
+{
+  "dataset_version": "...",
+  "schema_version": "...",
+  "ontology_version": "...",
+  "observation_schema_version": "...",
+  "state_schema_version": "...",
+  "serialization_version": "...",
+  "created_at": "...",
+  "sources": [],
+  "row_counts": {},
+  "split_counts": {},
+  "dedup_policy": "...",
+  "verification": {
+    "ok": true
+  }
+}
+
+Training başlamadan önce pipeline bu manifest’i okumalıdır.
+
+⸻
+
+29. Source Provenance
+
+Her kayıt mümkün olduğunca source lineage bilgisi taşımalıdır.
+
+Örnek:
+
+{
+  "source_dataset": "TeichAI/Hunter-Alpha-Coding-Agent-SFT",
+  "source_id": "...",
+  "source_row": 42,
+  "transformation": "hunter_tr_v1"
+}
+
+Ancak provenance model target’ına verilmek zorunda değildir.
+
+Provenance:
+
+audit
+debug
+filter
+rebuild
+
+içindir.
+
+⸻
+
+30. Split Politikası
+
+Temel kural:
+
+Aynı semantic örnek veya aynı family train ve test arasında bulunmamalıdır.
+
+Mümkün olduğunda:
+
+family-disjoint split
+
+tercih edilmelidir.
+
+Kaynak split’i güvenilir ise korunmalıdır.
+
+Split’i olmayan datasetlerde deterministic hash split kullanılabilir.
+
+Örneğin:
+
+SHA256(source_id)
+
+üzerinden.
+
+⸻
+
+31. Dedup Politikası
+
+Birleşik dataset oluşturulurken aynı örneğin birçok sourcedan tekrar gelmesi mümkündür.
+
+Minimum:
+
+exact dedup
+
+uygulanmalıdır.
+
+Split çakışmasında tercih sırası:
+
+test
+> validation
+> train
+
+olabilir.
+
+Ama kullanılan policy manifest’e yazılmalıdır.
+
+⸻
+
+32. Training Directory Standardı
+
+Önerilen proje yapısı:
+
+training/
+├── common/
+│   ├── data.py
+│   ├── serialization.py
+│   ├── contracts.py
+│   └── metrics.py
+│
+├── yasama/
+│   ├── train.py
+│   ├── config.yaml
+│   └── eval.py
+│
+├── yurutme/
+│   ├── train.py
+│   ├── config.yaml
+│   └── eval.py
+│
+└── yargi/
+    ├── train.py
+    ├── config.yaml
+    └── eval.py
+
+Ortak logic mümkün olduğunca:
+
+training/common/
+
+altında tutulmalıdır.
+
+Üç ayrı script’in aynı serialization logic’ini farklı şekilde tekrar yazması tercih edilmemelidir.
+
+⸻
+
+33. Checkpoint Directory Standardı
+
+Önerilen yapı:
+
+checkpoints/
+├── yasama/
+│   └── <run_name>/
+│
+├── yurutme/
+│   └── <run_name>/
+│
+└── yargi/
+    └── <run_name>/
+
+Her run içerisinde minimum:
+
+config.json/yaml
+training_args
+dataset_manifest.json
+metrics.json
+checkpoint*
+README / run card
+
+bulunmalıdır.
+
+Checkpoint’in hangi dataset sürümüyle üretildiği kaybolmamalıdır.
+
+⸻
+
+34. Run Naming Standardı
+
+Örnek:
+
+yasama-v1-modernbert-shareddata-v3
+yurutme-v1-mercan08b-shareddata-v3
+yargi-v1-mercan08b-shareddata-v3
+
+Run name mümkünse:
+
+role
+model
+dataset version
+experiment version
+
+bilgisini taşımalıdır.
+
+⸻
+
+35. Runtime Directory Standardı
+
+Önerilen:
+
+runtime/
+├── orchestrator/
+├── contracts/
+├── validators/
+├── executors/
+├── tool_registry/
+├── yasama_adapter/
+├── yurutme_adapter/
+└── yargi_adapter/
+
+Orchestrator üç modelin akışını yönetir.
+
+⸻
+
+36. Runtime Protocol
+
+Minimum:
+
+1. user request alınır
+2. state oluşturulur
+3. Yasama action seçer
+4. action canonical tool registry'de çözülür
+5. Yürütme arguments üretir
+6. JSON parse edilir
+7. schema validation yapılır
+8. policy validation yapılır
+9. gerekiyorsa confirmation alınır
+10. executor çalışır
+11. observation normalize edilir
+12. state update edilir
+13. Yasama yeniden çağrılır
+14. FINISH gelirse Yargı çağrılır
+15. final cevap kullanıcıya döner
+
+⸻
+
+37. Runtime Safety
+
+Minimum korumalar:
+
+max step limit
+repeated action+arguments detection
+repeated error detection
+path sandboxing
+shell sandboxing
+code sandboxing
+destructive action confirmation
+tool output prompt injection filtering
+schema validation
+observation grounding
+
+Yasama veya Yürütme model output’u tek başına yetkili executor komutu kabul edilmemelidir.
+
+⸻
+
+38. Tool Registry
+
+Production ortamında merkezi bir tool registry olmalıdır.
+
+Örneğin:
+
+{
+  "FILE_CREATE": {
+    "description": "...",
+    "parameters": {
+      "path": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "content"
+    ],
+    "side_effect": true,
+    "confirmation_required": false
+  }
+}
+
+Yasama action ontology ile Yürütme tool schema aynı registry üzerinden türetilirse interface drift riski azalır.
+
+⸻
+
+39. Yasama Evaluation
+
+Minimum metrics:
+
+action accuracy
+macro-F1
+next-action accuracy
+FINISH accuracy
+clarification accuracy
+
+Özellikle zor pair’ler:
+
+FILE_READ vs FILE_SEARCH
+FILE_CREATE vs FILE_EDIT
+WEB_SEARCH vs WEB_OPEN
+RESPOND vs TOOL
+FINISH vs CONTINUE
+
+ayrı ölçülmelidir.
+
+⸻
+
+40. Yürütme Evaluation
+
+Minimum:
+
+JSON validity
+exact key/schema match
+per-field accuracy
+whole-call exact match
+wrong-value leakage
+correction handling
+negation handling
+missing argument handling
+
+Örneğin:
+
+"Önce output.txt demiştim ama final.txt kullan."
+
+target:
+
+{
+  "path": "final.txt"
+}
+
+olmalıdır.
+
+⸻
+
+41. Yargı Evaluation
+
+Minimum:
+
+observation faithfulness
+success/error correctness
+hallucination rate
+critical-field recall
+JSON-copy rate
+natural response quality
+
+Özellikle şu hata ciddi kabul edilmelidir:
+
+observation.status = error
+model:
+"İşlem başarıyla tamamlandı."
+
+⸻
+
+42. Üç Model Arası Integration Evaluation
+
+Tek modellerin metric’leri yeterli değildir.
+
+End-to-end test gerekir.
+
+Örnek:
+
+USER:
+main.py dosyasını oku, portu 8080 yap ve testleri çalıştır.
+
+Beklenen:
+
+Yasama → FILE_READ
+Yürütme →
+{"path":"main.py"}
+Executor → content
+Yasama → FILE_EDIT
+Yürütme → correct edit args
+Executor → success
+Yasama → SHELL_EXECUTE
+Yürütme →
+{"command":"pytest"}
+Executor →
+12 passed
+Yasama → FINISH
+Yargı →
+main.py içindeki port 8080 olarak güncellendi ve 12 testin tamamı geçti.
+
+⸻
+
+43. Physical Model Topolojisi
+
+Mimari mantıksal olarak üç modüldür:
+
+Yasama
+Yürütme
+Yargı
+
+Ancak fiziksel olarak iki model olabilir.
+
+Örnek:
+
+ModernBERT
+→ Yasama
+Mercan 0.8B
+├── Yürütme
+└── Yargı
+
+Yürütme ve Yargı aynı checkpoint’te multitask eğitilecekse görev açık biçimde ayrılmalıdır.
+
+Örneğin:
+
+<TASK_ARGUMENT_FILL>
+
+ve:
+
+<TASK_RESPONSE>
+
+gibi task mode’ları kullanılabilir.
+
+Bu konu kesin training tasarımı belirlenirken versionlanmalıdır.
+
+⸻
+
+44. Değişiklik Yönetimi
+
+Interface değiştiren her önemli karar şu sırayla uygulanmalıdır:
+
+1. ortak contract güncellenir
+2. schema/ontology version gerekiyorsa artırılır
+3. dataset builder güncellenir
+4. verifier güncellenir
+5. dataset yeniden üretilir
+6. role-specific formatter test edilir
+7. role-specific model eval yapılır
+8. end-to-end integration test yapılır
+
+Bir değişiklik yalnız tek modülde sessiz şekilde uygulanmamalıdır.
+
+Örneğin:
+
+observation schema değişti
+
+ise kontrol edilmesi gerekenler:
+
+dataset
+Yasama state builder
+Yargı formatter
+runtime normalizer
+integration tests
+
+olmalıdır.
+
+⸻
+
+45. PROJECT_MASTER.md
+
+Repository kökündeki:
+
+PROJECT_MASTER.md
+
+üç modülün ortak mimari sözleşmesi olarak kabul edilir.
+
+Yeni bir:
+
+action mapping
+data format
+training target
+serialization
+runtime contract
+
+kararı bu dosyayla çelişiyorsa önce ortak contract güncellenmelidir.
+
+README genel kullanım ve repository dokümantasyonudur.
+
+PROJECT_MASTER.md ise daha katı teknik sözleşmedir.
+
+⸻
+
+46. Henüz Kesinleşmemiş Konular
+
+Aşağıdaki konular proje ilerledikçe kesin karara bağlanmalıdır:
+
+shared_data fiziksel formatı
+JSONL.GZ vs Parquet vs ikisi
+full active source listesi
+dataset balancing/sampling
+Yasama base model
+Yürütme base model
+Yargı base model
+Yürütme + Yargı aynı checkpoint mi
+tokenizer version
+chat template version
+max sequence length
+truncation strategy
+training hyperparameters
+checkpoint naming kesin standardı
+tool registry kesin schema
+runtime service topology
+evaluation thresholds
+release criteria
+
+Bu konular hakkında karar verilmeden mevcut bir davranış production standardı gibi varsayılmamalıdır.
+
+⸻
+
+47. Yeni Bir Dataset Eklerken
+
+Yeni source ekleme checklist:
+
+[ ] source license/provenance kaydedildi mi?
+[ ] source ID korunuyor mu?
+[ ] source action isimleri çıkarıldı mı?
+[ ] canonical mapping semantic olarak güvenli mi?
+[ ] observation gerçek mi?
+[ ] fabricated execution var mı?
+[ ] visible chain-of-thought temizlendi mi?
+[ ] Yasama görünümü oluşturuldu mu?
+[ ] Yürütme görünümü oluşturuldu mu?
+[ ] Yargı için grounded final response var mı?
+[ ] split policy uygulandı mı?
+[ ] dedup uygulandı mı?
+[ ] verifier geçti mi?
+[ ] shared manifest güncellendi mi?
+
+⸻
+
+48. Yasama Çalışmasına Başlarken Checklist
+
+[ ] yalnız canonical/eligible action rows kullanılıyor mu?
+[ ] target sadece action mı?
+[ ] arguments target'a sızıyor mu?
+[ ] source action ile canonical action karışıyor mu?
+[ ] current state doğru oluşturuluyor mu?
+[ ] tool sonrası next-action örnekleri var mı?
+[ ] FINISH örnekleri var mı?
+[ ] class imbalance kontrol edildi mi?
+
+⸻
+
+49. Yürütme Çalışmasına Başlarken Checklist
+
+[ ] selected action input'ta açık mı?
+[ ] doğru tool schema kullanılıyor mu?
+[ ] placeholder key'leri doğru mu?
+[ ] target sadece arguments JSON mu?
+[ ] source schema korunuyor mu?
+[ ] correction/negation örnekleri var mı?
+[ ] malformed JSON metric'i ölçülüyor mu?
+
+⸻
+
+50. Yargı Çalışmasına Başlarken Checklist
+
+[ ] gerçek observation kullanılıyor mu?
+[ ] response wrapper target'a girmiyor mu?
+[ ] raw natural language target kullanılıyor mu?
+[ ] observation prompt tarafında mı?
+[ ] success/error grounding korunuyor mu?
+[ ] tool result'ta olmayan bilgi target'ta var mı?
+[ ] historical assistant cevapları yanlışlıkla loss'a giriyor mu?
+
+⸻
+
+51. Genel Proje Checklist
+
+Yeni bir training veya runtime işi başlamadan önce:
+
+[ ] Hangi role çalışıyorum?
+[ ] Dataset version ne?
+[ ] Schema version ne?
+[ ] Ontology version ne?
+[ ] Kullanılan source gerçekten active mi?
+[ ] Input contract doğru mu?
+[ ] Target contract doğru mu?
+[ ] Diğer iki modülün interface'i bozuluyor mu?
+[ ] Verifier var mı?
+[ ] Integration test var mı?
+
+⸻
+
+52. Temel Tasarım İlkesi
+
+Bu sistemin özü:
+
+YASAMA
+→ Ne yapılmalı?
+YÜRÜTME
+→ Nasıl ve hangi argümanlarla yapılmalı?
+EXECUTOR
+→ Gerçekte ne oldu?
+YARGI
+→ Gerçekte olan şey kullanıcıya nasıl anlatılmalı?
+
+Bu sınırlar korunmalıdır.
+
+⸻
+
+53. Kısa Özet
+
+                    MERCAN AGENT
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │    YASAMA    │
+                  │ action seçer │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │   YÜRÜTME    │
+                  │ args üretir  │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │  VALIDATOR   │
+                  └──────┬───────┘
+                         │
+                         ▼
+                  ┌──────────────┐
+                  │   EXECUTOR   │
+                  │ işi yapar    │
+                  └──────┬───────┘
+                         │
+                         ▼
+                    observation
+                         │
+                ┌────────┴────────┐
+                │                 │
+                ▼                 ▼
+             YASAMA             FINISH
+                │                 │
+          next action             ▼
+                │              YARGI
+                └──→ ...          │
+                                  ▼
+                                 USER
+
+Yasama karar verir.
+
+Yürütme kararı uygulanabilir tool çağrısına dönüştürür.
+
+Executor gerçek işlemi gerçekleştirir.
+
+Yargı yalnız gerçekleşen sonuca dayanarak kullanıcı cevabı üretir.
+
+Bu dört sınır korunursa üç modül ayrı ayrı geliştirilebilir, ayrı ayrı eğitilebilir ve buna rağmen tek bir agent sistemi olarak güvenilir biçimde birlikte çalışabilir.
