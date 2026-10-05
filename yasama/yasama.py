@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.serialization import serialize_yasama_input
 
 
 CANONICAL_ACTIONS = frozenset(
@@ -31,8 +31,8 @@ CANONICAL_ACTIONS = frozenset(
 )
 
 YASAMA_SYSTEM_PROMPT = """Sen Mercan Yasama modelisin.
-Görevin yalnızca mevcut kullanıcı isteği, konuşma geçmişi ve state'e bakarak bir sonraki canonical action'ı seçmektir.
-Argüman üretme, açıklama yapma ve kullanıcıya cevap yazma.
+Görevin kullanıcı isteği, konuşma geçmişi ve mevcut state'e bakarak yalnızca bir sonraki canonical action'ı seçmektir.
+Argüman üretme, açıklama yapma ve kullanıcıya final cevap yazma.
 Çıktın yalnızca aşağıdaki action isimlerinden tam olarak biri olmalıdır:
 RESPOND, WEB_SEARCH, WEB_OPEN, FILE_READ, FILE_SEARCH, FILE_LIST, FILE_CREATE, FILE_EDIT, FILE_DELETE, FILE_MOVE, CODE_EXECUTE, SHELL_EXECUTE, DOWNLOAD, SEND_MAIL, ASK_CLARIFICATION, FINISH.
 """
@@ -90,7 +90,11 @@ class YasamaRuntime:
                 {"role": "system", "content": YASAMA_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    "content": serialize_yasama_input(
+                        user_prompt=payload["user_prompt"],
+                        conversation_history=payload["conversation_history"],
+                        state=payload["state"],
+                    ),
                 },
             ]
             return self._backend.generate(messages, config=self._generation_config)
