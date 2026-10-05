@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.output_parsing import parse_json_object
 from runtime.serialization import serialize_yurutme_input
 
 
@@ -62,10 +62,7 @@ class YurutmeRuntime:
 
         raw_arguments = self._infer(payload)
         if isinstance(raw_arguments, str):
-            try:
-                raw_arguments = json.loads(raw_arguments)
-            except json.JSONDecodeError as exc:
-                raise ValueError("Yurutme produced invalid JSON.") from exc
+            raw_arguments = parse_json_object(raw_arguments)
 
         if not isinstance(raw_arguments, Mapping):
             raise TypeError("Yurutme output must be a JSON object.")
