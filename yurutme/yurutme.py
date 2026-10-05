@@ -7,10 +7,11 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.serialization import serialize_yurutme_input
 
 
 YURUTME_SYSTEM_PROMPT = """Sen Mercan Yurutme modelisin.
-Yasama tarafından seçilen action için, verilen tool schema ve placeholder'a uygun argüman JSON'unu üret.
+Yasama tarafından seçilen action için kullanıcı isteği, konuşma geçmişi, state, tool schema ve placeholder'a bakarak doğru argüman JSON'unu üret.
 Action seçme, kullanıcıya cevap verme ve açıklama ekleme.
 Çıktın yalnızca geçerli bir JSON object olmalıdır; markdown code fence kullanma.
 """
@@ -80,7 +81,14 @@ class YurutmeRuntime:
                 {"role": "system", "content": YURUTME_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    "content": serialize_yurutme_input(
+                        user_prompt=payload["user_prompt"],
+                        conversation_history=payload["conversation_history"],
+                        state=payload["state"],
+                        action=payload["action"],
+                        tool_schema=payload["tool_schema"],
+                        placeholder=payload["placeholder"],
+                    ),
                 },
             ]
             return self._backend.generate(messages, config=self._generation_config)
