@@ -17,6 +17,7 @@ from yurutme.yurutme import YurutmeRuntime
 
 ExecutorFn = Callable[[str, dict[str, Any]], Mapping[str, Any]]
 ControlHandler = Callable[[str, Sequence[Mapping[str, Any]], Mapping[str, Any]], str]
+TraceHandler = Callable[[str, Mapping[str, Any]], None]
 
 
 class AgentPipeline:
@@ -33,6 +34,7 @@ class AgentPipeline:
         max_steps: int = 12,
         respond_handler: ControlHandler | None = None,
         clarification_handler: ControlHandler | None = None,
+        trace_handler: TraceHandler | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1.")
@@ -40,8 +42,6 @@ class AgentPipeline:
         self.yasama = yasama
         self.yurutme = yurutme
         self.yargi = yargi
-        # Keep zero-config schemas/read-only tools available when callers add
-        # external tools. Explicit caller definitions override defaults.
         self.tool_registry = {
             **BUILTIN_TOOL_REGISTRY,
             **{key: dict(value) for key, value in tool_registry.items()},
@@ -50,6 +50,11 @@ class AgentPipeline:
         self.max_steps = max_steps
         self.respond_handler = respond_handler
         self.clarification_handler = clarification_handler
+        self.trace_handler = trace_handler
+
+    def _trace(self, event: str, **payload: Any) -> None:
+        if self.trace_handler is not None:
+            self.trace_handler(event, payload)
 
     def run(
         self,
@@ -74,23 +79,28 @@ class AgentPipeline:
                 conversation_history=history,
                 state=state,
             )
+            self._trace("yasama", step=step_index, action=action)
 
             if action == "FINISH":
-                return self.yargi.run(
+                response = self.yargi.run(
                     user_prompt=user_prompt,
                     conversation_history=history,
                     observations=observations,
                 )
+                self._trace("yargi", response=response)
+                return response
 
             if action == "RESPOND":
                 if self.respond_handler is not None:
-                    return self.respond_handler(user_prompt, history, state)
-
-                return self.yargi.run(
-                    user_prompt=user_prompt,
-                    conversation_history=history,
-                    observations=observations,
-                )
+                    response = self.respond_handler(user_prompt, history, state)
+                else:
+                    response = self.yargi.run(
+                        user_prompt=user_prompt,
+                        conversation_history=history,
+                        observations=observations,
+                    )
+                self._trace("yargi", response=response)
+                return response
 
             if action == "ASK_CLARIFICATION":
                 if self.clarification_handler is None:
@@ -98,7 +108,9 @@ class AgentPipeline:
                         "ASK_CLARIFICATION was selected, but the runtime "
                         "clarification policy is not configured yet."
                     )
-                return self.clarification_handler(user_prompt, history, state)
+                response = self.clarification_handler(user_prompt, history, state)
+                self._trace("clarification", response=response)
+                return response
 
             tool = self.tool_registry.get(action)
             if tool is None:
@@ -119,6 +131,7 @@ class AgentPipeline:
                 tool_schema=public_tool_schema,
                 placeholder=placeholder,
             )
+            self._trace("yurutme", step=step_index, action=action, arguments=arguments)
 
             if tool.get("_builtin_executor") == "local_readonly":
                 raw_observation = execute_builtin_local(action, arguments)
@@ -129,6 +142,7 @@ class AgentPipeline:
                 action=action,
                 observation=raw_observation,
             )
+            self._trace("executor", step=step_index, observation=observation)
             observations.append(observation)
 
             state["completed_actions"].append(action)
