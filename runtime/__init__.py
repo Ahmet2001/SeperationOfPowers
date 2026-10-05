@@ -5,9 +5,9 @@ from .backends import (
     GenerationConfig,
     LlamaCppBackend,
     MercanCliBackend,
-    OllamaBackend,
 )
 from .libmercan_backend import LibMercanBackend
+from .ollama_backend import OllamaBackend
 
 __all__ = [
     "ChatBackend",
