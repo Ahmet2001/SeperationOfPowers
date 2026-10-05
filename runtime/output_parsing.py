@@ -28,7 +28,6 @@ def parse_canonical_action(raw: str, actions: Iterable[str]) -> str:
     if upper in allowed:
         return upper
 
-    # Some generic instruct models return {"action": "FILE_READ"}.
     try:
         decoded = json.loads(text)
     except json.JSONDecodeError:
@@ -38,7 +37,6 @@ def parse_canonical_action(raw: str, actions: Iterable[str]) -> str:
         if isinstance(value, str) and value.strip().upper() in allowed:
             return value.strip().upper()
 
-    # Accept a canonical action as the first non-empty line.
     for line in text.splitlines():
         stripped = line.strip().strip("`*")
         if not stripped:
@@ -96,12 +94,7 @@ def _render_simple_value(value: Any) -> str | None:
 
 
 def unwrap_natural_language_response(raw: str) -> str:
-    """Unwrap common generic-model JSON wrappers into user-facing text.
-
-    Fine-tuned Yargi models should return natural language directly. Generic
-    instruct models sometimes emit ``response``, ``answer`` or ``result`` JSON
-    wrappers despite the system prompt, so normalize only these simple cases.
-    """
+    """Unwrap common generic-model JSON wrappers into user-facing text."""
 
     text = raw.strip()
     if not text:
@@ -111,10 +104,26 @@ def unwrap_natural_language_response(raw: str) -> str:
     except json.JSONDecodeError:
         return text
 
-    if isinstance(decoded, Mapping):
-        for key in ("response", "answer", "result"):
-            if key in decoded:
-                rendered = _render_simple_value(decoded[key])
-                if rendered is not None:
-                    return rendered
+    if not isinstance(decoded, Mapping):
+        return text
+
+    for key in (
+        "response",
+        "answer",
+        "result",
+        "message",
+        "summary",
+        "file_summary",
+        "file_list",
+    ):
+        if key in decoded:
+            rendered = _render_simple_value(decoded[key])
+            if rendered is not None:
+                return rendered
+
+    if len(decoded) == 1:
+        rendered = _render_simple_value(next(iter(decoded.values())))
+        if rendered is not None:
+            return rendered
+
     return text
