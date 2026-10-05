@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.output_parsing import unwrap_natural_language_response
 from runtime.serialization import serialize_yargi_input
 
 
@@ -52,7 +53,7 @@ class YargiRuntime:
             "observations": [dict(observation) for observation in observations],
         }
 
-        response = self._infer(payload).strip()
+        response = unwrap_natural_language_response(self._infer(payload))
         if not response:
             raise ValueError("Yargi produced an empty response.")
 
