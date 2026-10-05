@@ -10,10 +10,10 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
-mercan-sop = "cli:main"
+mercan-sop = "cli_entry:main"
 
 [tool.setuptools]
-py-modules = ["cli", "main"]
+py-modules = ["cli", "cli_entry", "main"]
 
 [tool.setuptools.packages.find]
 where = ["."]
