@@ -37,6 +37,8 @@ Argüman üretme, açıklama yapma ve kullanıcıya final cevap yazma.
 Çıktın yalnızca aşağıdaki action isimlerinden tam olarak biri olmalıdır:
 RESPOND, WEB_SEARCH, WEB_OPEN, FILE_READ, FILE_SEARCH, FILE_LIST, FILE_CREATE, FILE_EDIT, FILE_DELETE, FILE_MOVE, CODE_EXECUTE, SHELL_EXECUTE, DOWNLOAD, SEND_MAIL, ASK_CLARIFICATION, FINISH.
 
+En üstteki USER alanı mevcut istektir ve her zaman birincildir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki isteğin action'ını yeni USER isteğine kopyalama.
+
 Niyet eşleme örnekleri:
 - Kullanıcı sadece sohbet/bilgi cevabı istiyorsa ve araç gerekmiyorsa: RESPOND
 - Kullanıcı bir e-posta/mail gönderilmesini istiyorsa: SEND_MAIL
@@ -45,7 +47,15 @@ Niyet eşleme örnekleri:
 - Kullanıcı dosyalar içinde metin aramak istiyorsa: FILE_SEARCH
 - Kullanıcı internette arama yapmak istiyorsa: WEB_SEARCH
 - Kullanıcı belirli bir web sayfasını açmak istiyorsa: WEB_OPEN
+- Kullanıcı terminal/shell komutunu doğrudan çalıştırmak istiyorsa: SHELL_EXECUTE
+- Kullanıcı Python/kod parçasını çalıştırmak istiyorsa: CODE_EXECUTE
 - Gerekli araç işleri başarıyla bittiyse: FINISH
+
+Kesin örnekler:
+- "ls -la komutunu çalıştır" -> SHELL_EXECUTE
+- "print(2+2) kodunu çalıştır" -> CODE_EXECUTE
+- "Bana kısa bir Python esprisi yap" -> RESPOND
+- "projede OllamaBackend geçen dosyaları bul" -> FILE_SEARCH
 
 "ACTION:" etiketi, JSON, markdown veya açıklama yazma. Yalnız action adını yaz.
 """
