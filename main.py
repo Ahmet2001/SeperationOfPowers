@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from runtime.local_tools import BUILTIN_TOOL_REGISTRY, execute_builtin_local
 from yasama.yasama import YasamaRuntime
 from yargi.yargi import YargiRuntime
 from yurutme.yurutme import YurutmeRuntime
@@ -39,7 +40,7 @@ class AgentPipeline:
         self.yasama = yasama
         self.yurutme = yurutme
         self.yargi = yargi
-        self.tool_registry = tool_registry
+        self.tool_registry = tool_registry or BUILTIN_TOOL_REGISTRY
         self.executor = executor
         self.max_steps = max_steps
         self.respond_handler = respond_handler
@@ -80,8 +81,6 @@ class AgentPipeline:
                 if self.respond_handler is not None:
                     return self.respond_handler(user_prompt, history, state)
 
-                # Default: keep response generation out of Yasama and delegate
-                # natural-language generation to Yargi without executing a tool.
                 return self.yargi.run(
                     user_prompt=user_prompt,
                     conversation_history=history,
@@ -113,9 +112,14 @@ class AgentPipeline:
                 placeholder=placeholder,
             )
 
+            if tool.get("_builtin_executor") == "local_readonly":
+                raw_observation = execute_builtin_local(action, arguments)
+            else:
+                raw_observation = self.executor(action, arguments)
+
             observation = self._validate_observation(
                 action=action,
-                observation=self.executor(action, arguments),
+                observation=raw_observation,
             )
             observations.append(observation)
 
