@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.output_parsing import parse_canonical_action
 from runtime.serialization import serialize_yasama_input
 
 
@@ -35,6 +36,18 @@ Görevin kullanıcı isteği, konuşma geçmişi ve mevcut state'e bakarak yaln�
 Argüman üretme, açıklama yapma ve kullanıcıya final cevap yazma.
 Çıktın yalnızca aşağıdaki action isimlerinden tam olarak biri olmalıdır:
 RESPOND, WEB_SEARCH, WEB_OPEN, FILE_READ, FILE_SEARCH, FILE_LIST, FILE_CREATE, FILE_EDIT, FILE_DELETE, FILE_MOVE, CODE_EXECUTE, SHELL_EXECUTE, DOWNLOAD, SEND_MAIL, ASK_CLARIFICATION, FINISH.
+
+Niyet eşleme örnekleri:
+- Kullanıcı sadece sohbet/bilgi cevabı istiyorsa ve araç gerekmiyorsa: RESPOND
+- Kullanıcı bir e-posta/mail gönderilmesini istiyorsa: SEND_MAIL
+- Kullanıcı klasördeki dosyaları listelemek istiyorsa: FILE_LIST
+- Kullanıcı bir dosyanın içeriğini okumak istiyorsa: FILE_READ
+- Kullanıcı dosyalar içinde metin aramak istiyorsa: FILE_SEARCH
+- Kullanıcı internette arama yapmak istiyorsa: WEB_SEARCH
+- Kullanıcı belirli bir web sayfasını açmak istiyorsa: WEB_OPEN
+- Gerekli araç işleri başarıyla bittiyse: FINISH
+
+"ACTION:" etiketi, JSON, markdown veya açıklama yazma. Yalnız action adını yaz.
 """
 
 InferenceFn = Callable[[dict[str, Any]], str]
@@ -75,11 +88,7 @@ class YasamaRuntime:
             "state": dict(state),
         }
 
-        action = self._infer(payload).strip().upper()
-        if action not in CANONICAL_ACTIONS:
-            raise ValueError(f"Invalid Yasama action: {action!r}")
-
-        return action
+        return parse_canonical_action(self._infer(payload), CANONICAL_ACTIONS)
 
     def _infer(self, payload: dict[str, Any]) -> str:
         if self._inference_fn is not None:
