@@ -103,12 +103,15 @@ class AgentPipeline:
             if placeholder is not None and not isinstance(placeholder, Mapping):
                 raise TypeError(f"Invalid placeholder for action {action!r}.")
 
+            public_tool_schema = {
+                key: value for key, value in tool.items() if not str(key).startswith("_")
+            }
             arguments = self.yurutme.run(
                 user_prompt=user_prompt,
                 conversation_history=history,
                 state=state,
                 action=action,
-                tool_schema=tool,
+                tool_schema=public_tool_schema,
                 placeholder=placeholder,
             )
 
