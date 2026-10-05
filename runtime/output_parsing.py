@@ -2,7 +2,7 @@
 
 Fine-tuned role models should follow the exact contracts. These helpers only make
 runtime testing with generic instruct models less brittle when they add wrappers
-such as ``ACTION: ...``, fenced JSON, or ``{"response": ...}``.
+such as ``ACTION: ...``, fenced JSON, or simple ``{"response": ...}`` results.
 """
 
 from __future__ import annotations
@@ -87,8 +87,21 @@ def parse_json_object(raw: str) -> dict[str, Any]:
     raise ValueError("Yurutme produced invalid JSON object output.")
 
 
+def _render_simple_value(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list) and all(isinstance(item, (str, int, float, bool)) for item in value):
+        return "\n".join(f"- {item}" for item in value)
+    return None
+
+
 def unwrap_natural_language_response(raw: str) -> str:
-    """Unwrap a generic-model ``{"response": "..."}`` result when present."""
+    """Unwrap common generic-model JSON wrappers into user-facing text.
+
+    Fine-tuned Yargi models should return natural language directly. Generic
+    instruct models sometimes emit ``response``, ``answer`` or ``result`` JSON
+    wrappers despite the system prompt, so normalize only these simple cases.
+    """
 
     text = raw.strip()
     if not text:
@@ -97,6 +110,11 @@ def unwrap_natural_language_response(raw: str) -> str:
         decoded = json.loads(text)
     except json.JSONDecodeError:
         return text
-    if isinstance(decoded, Mapping) and isinstance(decoded.get("response"), str):
-        return decoded["response"].strip()
+
+    if isinstance(decoded, Mapping):
+        for key in ("response", "answer", "result"):
+            if key in decoded:
+                rendered = _render_simple_value(decoded[key])
+                if rendered is not None:
+                    return rendered
     return text
