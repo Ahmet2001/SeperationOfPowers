@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ctypes
+import random
 import unittest
 
-from runtime import GenerationConfig, MercanCliBackend
+from runtime import GenerationConfig, LibMercanBackend, MercanCliBackend
 from yasama.yasama import YasamaRuntime
 from yargi.yargi import YargiRuntime
 from yurutme.yurutme import YurutmeRuntime
@@ -76,6 +78,34 @@ class RuntimeBackendTests(unittest.TestCase):
             "FILE_READ\n"
         )
         self.assertEqual(MercanCliBackend._strip_cli_logs(raw), "FILE_READ")
+
+    def test_libmercan_chat_format_matches_mercan_cli_roles(self) -> None:
+        formatted = LibMercanBackend._format_chat(
+            [
+                {"role": "system", "content": "Sistem"},
+                {"role": "user", "content": "Merhaba"},
+            ]
+        )
+        self.assertEqual(
+            formatted,
+            "<|im_start|>sistem\nSistem<|im_end|>\n"
+            "<|im_start|>kullanici\nMerhaba<|im_end|>\n"
+            "<|im_start|>asistan\n",
+        )
+
+    def test_libmercan_greedy_sampling_chooses_highest_logit(self) -> None:
+        logits = (ctypes.c_float * 3)(0.1, 3.0, 1.5)
+        token = LibMercanBackend._sample_token(
+            logits_ptr=logits,
+            n_vocab=3,
+            temperature=0.0,
+            top_k=3,
+            top_p=1.0,
+            repeat_penalty=1.0,
+            recent_tokens=[],
+            rng=random.Random(0),
+        )
+        self.assertEqual(token, 1)
 
 
 if __name__ == "__main__":
