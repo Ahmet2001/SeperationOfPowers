@@ -2,63 +2,14 @@
 
 The role runtimes depend on a shared `ChatBackend` protocol. The orchestration code does not need to know how a model is executed.
 
+For terminal launcher/configuration usage, see [`CLI.md`](../CLI.md).
+
 Supported adapters:
 
 - `OllamaBackend`: Ollama native `/api/chat`
 - `LlamaCppBackend`: llama.cpp OpenAI-compatible `/v1/chat/completions`
 - `MercanCliBackend`: the `mercan` executable from `mercanApp-test1`
 - `LibMercanBackend`: direct in-process ctypes binding to the custom `libmercan` C ABI
-
-## Training-contract serialization
-
-`runtime/serialization.py` is the single runtime source of truth for what each role model sees. Backend choice must not change this serialization.
-
-Yasama receives the documented conceptual input in a deterministic layout:
-
-```text
-USER:
-<current user request>
-CONVERSATION_HISTORY:
-<JSON, only when non-empty>
-STATE:
-<JSON>
-```
-
-Its model output remains a raw canonical action string such as `FILE_READ` or `FINISH`; arguments are never part of the Yasama target.
-
-Yurutme receives:
-
-```text
-USER:
-<current user request>
-CONVERSATION_HISTORY:
-<JSON, only when non-empty>
-STATE:
-<JSON>
-ACTION:
-<selected action>
-TOOL_SCHEMA:
-<JSON>
-PLACEHOLDER:
-<JSON or null>
-```
-
-Its model output is the arguments JSON object only.
-
-Yargi follows the documented ChatML example. The user message contains the raw current request followed by real executor observations:
-
-```text
-<current user request>
-<tool_observations>
-[
-  ... real observations ...
-]
-</tool_observations>
-```
-
-When relevant conversation history is non-empty, it is serialized before the observation block. The final Yargi model output is natural language only; it is not wrapped in JSON.
-
-The exact history serialization is an explicit runtime convention because `MasterFormat.txt` defines `conversation_history` conceptually but does not provide a concrete serialized example for it. If training later adopts another history encoding, change `runtime/serialization.py` and the matching formatter together.
 
 ## Ollama
 
@@ -206,3 +157,42 @@ yargi = YargiRuntime(
 ```
 
 The same backend instance may also be shared when the same model/runtime serves multiple roles.
+
+## Prompt serialization contract
+
+Role prompt serialization lives in `runtime/serialization.py`. This keeps backend transport separate from the training/runtime data contract.
+
+Current layouts are:
+
+```text
+Yasama:
+USER:
+<request>
+[CONVERSATION_HISTORY: ...]
+STATE:
+{...}
+
+Yurutme:
+USER:
+<request>
+[CONVERSATION_HISTORY: ...]
+STATE:
+{...}
+ACTION:
+<action>
+TOOL_SCHEMA:
+{...}
+PLACEHOLDER:
+{...}
+
+Yargi:
+<request>
+[<conversation_history>...</conversation_history>]
+<tool_observations>
+[...]
+</tool_observations>
+```
+
+Yasama still outputs only a canonical action string. Yurutme still outputs only the arguments JSON object. Yargi still outputs only natural language.
+
+`conversation_history` is documented in `MasterFormat.txt` as conceptual input, but the report does not define one exact serialization example for it. The current deterministic history blocks are therefore a runtime convention, not a finalized training standard; update only `runtime/serialization.py` if the training formatter later establishes another representation.
