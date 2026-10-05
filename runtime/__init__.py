@@ -7,10 +7,12 @@ from .backends import (
     MercanCliBackend,
     OllamaBackend,
 )
+from .libmercan_backend import LibMercanBackend
 
 __all__ = [
     "ChatBackend",
     "GenerationConfig",
+    "LibMercanBackend",
     "LlamaCppBackend",
     "MercanCliBackend",
     "OllamaBackend",
