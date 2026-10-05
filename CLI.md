@@ -8,6 +8,49 @@ pip install -e .
 
 After that, use `mercan-sop` directly from the terminal.
 
+## Direct model/backend test
+
+Use `model-test` when you want to verify that a model runtime works before entering the Yasama/Yurutme/Yargi pipeline.
+
+Ollama example:
+
+```bash
+mercan-sop model-test ollama qwen2.5:7b
+```
+
+Custom prompt:
+
+```bash
+mercan-sop model-test ollama qwen2.5:7b \
+  --prompt "Merhaba, kendini tek cümlede tanıt."
+```
+
+llama.cpp server example:
+
+```bash
+mercan-sop model-test llamacpp mercan-test \
+  --base-url http://127.0.0.1:8080
+```
+
+Mercan CLI example:
+
+```bash
+mercan-sop model-test mercan-cli /models/model.mercan \
+  --binary /opt/mercan/bin/mercan \
+  --threads 8
+```
+
+Direct libmercan example:
+
+```bash
+mercan-sop model-test libmercan /models/model.mercan \
+  --library /opt/mercan/lib/libmercan.so \
+  --threads 8 \
+  --gpu-layers -1
+```
+
+`model-test` sends one system message and one user message directly to the selected backend. It does not invoke Yasama, Yurutme, Yargi, the tool registry, or the executor. This makes it useful for separating model/server problems from pipeline problems.
+
 ## Create a starter config
 
 ```bash
@@ -74,7 +117,7 @@ Conversation history is kept across terminal turns and passed back into the role
 mercan-sop doctor --config sop.json
 ```
 
-`doctor` checks role/backend/model configuration and local paths required by direct `libmercan` setups. It does not send an inference request to remote Ollama or llama.cpp servers.
+`doctor` checks role/backend/model configuration and local paths required by direct `libmercan` setups. It does not send an inference request to remote Ollama or llama.cpp servers. Use `model-test` for a real inference check.
 
 ## Backend names
 
