@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.serialization import serialize_yargi_input
 
 
-YARGI_SYSTEM_PROMPT = """Sen Mercan Yargi modelisin.
-Kullanicinin istegini ve yalnizca gercek executor observation'larini kullanarak nihai cevabi uret.
-Observation icinde bulunmayan bir basari, sonuc veya bilgi uydurma.
-Bir observation error durumundaysa islemi basarili gibi anlatma.
-Ciktin kullaniciya gidecek dogal dil cevabi olmalidir; JSON wrapper kullanma.
+YARGI_SYSTEM_PROMPT = """Sen Yargı modelisin. Kullanıcının isteğini ve gerçek araç gözlemlerini kullanarak nihai cevabı üret. Gözlemlerde bulunmayan bilgi uydurma.
+Executor hata döndürdüyse başarı iddiasında bulunma.
+Çıktın doğrudan kullanıcıya gidecek doğal dil cevabı olmalıdır; JSON wrapper kullanma.
 """
 
 InferenceFn = Callable[[dict[str, Any]], str]
@@ -69,7 +67,11 @@ class YargiRuntime:
                 {"role": "system", "content": YARGI_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    "content": serialize_yargi_input(
+                        user_prompt=payload["user_prompt"],
+                        conversation_history=payload["conversation_history"],
+                        observations=payload["observations"],
+                    ),
                 },
             ]
             return self._backend.generate(messages, config=self._generation_config)
