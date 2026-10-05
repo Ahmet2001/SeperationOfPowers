@@ -1,9 +1,9 @@
 """Built-in read-only local tools and default action schemas.
 
 Read-only local actions execute directly for zero-config CLI testing. Actions
-with side effects (for example SEND_MAIL) may be present in the registry so
-Yurutme can construct arguments, but still require an explicitly configured
-external executor.
+with side effects (for example SEND_MAIL or SHELL_EXECUTE) may be present in the
+registry so Yurutme can construct arguments, but still require an explicitly
+configured external executor.
 """
 
 from __future__ import annotations
@@ -32,8 +32,6 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             },
             "additionalProperties": False,
         },
-        # Keep pattern unset in the example skeleton so a generic model is not
-        # biased toward '*' when the user explicitly names a file type.
         "placeholder": {"path": ".", "pattern": None, "recursive": False},
         "_builtin_executor": "local_readonly",
     },
@@ -90,6 +88,40 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
         "placeholder": {"to": None, "subject": None, "body": None},
+        "_executor_required": True,
+    },
+    "SHELL_EXECUTE": {
+        "description": (
+            "Execute a terminal/shell command. This schema only describes arguments; actual "
+            "execution requires an explicitly configured external executor."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Exact shell command requested by the user."},
+                "cwd": {"type": "string", "default": "."},
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+        },
+        "placeholder": {"command": None, "cwd": "."},
+        "_executor_required": True,
+    },
+    "CODE_EXECUTE": {
+        "description": (
+            "Execute a code snippet. This schema only describes arguments; actual execution "
+            "requires an explicitly configured external executor."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "language": {"type": "string", "description": "Programming language, e.g. python."},
+                "code": {"type": "string", "description": "Code to execute."},
+            },
+            "required": ["language", "code"],
+            "additionalProperties": False,
+        },
+        "placeholder": {"language": "python", "code": None},
         "_executor_required": True,
     },
 }
