@@ -1,4 +1,10 @@
-"""Built-in read-only local tools for zero-config CLI testing."""
+"""Built-in read-only local tools and default action schemas.
+
+Read-only local actions execute directly for zero-config CLI testing. Actions
+with side effects (for example SEND_MAIL) may be present in the registry so
+Yurutme can construct arguments, but still require an explicitly configured
+external executor.
+"""
 
 from __future__ import annotations
 
@@ -8,17 +14,27 @@ from typing import Any, Mapping
 
 BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "FILE_LIST": {
-        "description": "List files in a local directory.",
+        "description": (
+            "List files in a local directory. Infer a glob pattern from the user request: "
+            "use '*.py' for Python files, '*.json' for JSON files, etc. Use '*' only when "
+            "the user did not request a file type/name filter."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "default": "."},
-                "pattern": {"type": "string", "default": "*"},
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob filter inferred from the request, e.g. '*.py'.",
+                    "default": "*",
+                },
                 "recursive": {"type": "boolean", "default": False},
             },
             "additionalProperties": False,
         },
-        "placeholder": {"path": ".", "pattern": "*", "recursive": False},
+        # Keep pattern unset in the example skeleton so a generic model is not
+        # biased toward '*' when the user explicitly names a file type.
+        "placeholder": {"path": ".", "pattern": None, "recursive": False},
         "_builtin_executor": "local_readonly",
     },
     "FILE_READ": {
@@ -57,6 +73,24 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "max_results": 50,
         },
         "_builtin_executor": "local_readonly",
+    },
+    "SEND_MAIL": {
+        "description": (
+            "Send an email. This schema is available for argument generation, but actual "
+            "delivery requires an explicitly configured external executor."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address."},
+                "subject": {"type": "string", "description": "Email subject."},
+                "body": {"type": "string", "description": "Plain-text email body."},
+            },
+            "required": ["to", "subject", "body"],
+            "additionalProperties": False,
+        },
+        "placeholder": {"to": None, "subject": None, "body": None},
+        "_executor_required": True,
     },
 }
 
@@ -106,7 +140,12 @@ def execute_builtin_local(
             )
             return _observation(
                 action,
-                data={"path": str(base.relative_to(root)) or ".", "entries": entries},
+                data={
+                    "path": str(base.relative_to(root)) or ".",
+                    "pattern": pattern,
+                    "recursive": recursive,
+                    "entries": entries,
+                },
             )
 
         if action == "FILE_READ":
