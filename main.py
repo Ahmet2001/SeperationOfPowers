@@ -40,7 +40,12 @@ class AgentPipeline:
         self.yasama = yasama
         self.yurutme = yurutme
         self.yargi = yargi
-        self.tool_registry = tool_registry or BUILTIN_TOOL_REGISTRY
+        # Keep zero-config schemas/read-only tools available when callers add
+        # external tools. Explicit caller definitions override defaults.
+        self.tool_registry = {
+            **BUILTIN_TOOL_REGISTRY,
+            **{key: dict(value) for key, value in tool_registry.items()},
+        }
         self.executor = executor
         self.max_steps = max_steps
         self.respond_handler = respond_handler
