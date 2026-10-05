@@ -65,13 +65,13 @@ from yasama.yasama import YasamaRuntime
 from yurutme.yurutme import YurutmeRuntime
 from yargi.yargi import YargiRuntime
 
- yasama = YasamaRuntime(backend=OllamaBackend("mercan-yasama"))
- yurutme = YurutmeRuntime(
-     backend=LlamaCppBackend(model="mercan-yurutme")
- )
- yargi = YargiRuntime(
-     backend=MercanCliBackend("/models/yargi.mercan")
- )
+yasama = YasamaRuntime(backend=OllamaBackend("mercan-yasama"))
+yurutme = YurutmeRuntime(
+    backend=LlamaCppBackend(model="mercan-yurutme")
+)
+yargi = YargiRuntime(
+    backend=MercanCliBackend("/models/yargi.mercan")
+)
 ```
 
 The same backend instance may also be shared when the same model/server serves multiple roles.
