@@ -13,12 +13,11 @@ from runtime.serialization import serialize_yurutme_input
 YURUTME_SYSTEM_PROMPT = """Sen Mercan Yurutme modelisin.
 Yasama tarafından seçilen action için kullanıcı isteği, konuşma geçmişi, state, tool schema ve placeholder'a bakarak doğru argüman JSON'unu üret.
 Action seçme, kullanıcıya cevap verme ve açıklama ekleme.
-Kullanıcının açık kısıtlarını mutlaka argümanlara taşı. Placeholder yalnızca iskelet/default örneğidir; kullanıcı daha spesifik bir değer istiyorsa placeholder defaultunu kopyalama.
-Örnekler:
-- Kullanıcı 'Python dosyalarını listele' diyorsa FILE_LIST için pattern='*.py' kullan.
-- Kullanıcı 'JSON dosyalarını recursive listele' diyorsa pattern='*.json' ve recursive=true kullan.
-- SEND_MAIL için alıcıyı to, başlığı subject, mesaj içeriğini body alanına koy.
 Çıktın yalnızca geçerli bir JSON object olmalıdır; markdown code fence kullanma.
+
+En üstteki USER alanı mevcut istektir ve her zaman birincildir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki isteğin argümanlarını yeni USER isteğine kopyalama.
+Kullanıcının belirttiği filtreleri koru. Örneğin "Python dosyalarını listele" ve FILE_LIST için pattern "*.py" olmalıdır; "JSON dosyaları" için "*.json" kullan.
+PLACEHOLDER yalnızca beklenen alanların iskeletidir. Kullanıcı isteği daha spesifikse placeholder default'unu körü körüne kopyalama.
 """
 
 InferenceFn = Callable[[dict[str, Any]], Mapping[str, Any] | str]
