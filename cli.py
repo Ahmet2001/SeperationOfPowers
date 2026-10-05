@@ -39,6 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_steps": 12,
         "tool_registry": None,
         "executor": None,
+        "debug": False,
     },
 }
 
@@ -118,6 +119,8 @@ def _resolve_config(args: argparse.Namespace) -> dict[str, Any]:
         config.setdefault("pipeline", {})["tool_registry"] = args.tool_registry
     if getattr(args, "executor", None):
         config.setdefault("pipeline", {})["executor"] = args.executor
+    if getattr(args, "debug", False):
+        config.setdefault("pipeline", {})["debug"] = True
 
     return config
 
@@ -228,6 +231,11 @@ def _missing_executor(action: str, arguments: dict[str, Any]) -> Mapping[str, An
     )
 
 
+def _debug_trace(event: str, payload: Mapping[str, Any]) -> None:
+    rendered = json.dumps(dict(payload), ensure_ascii=False, default=str)
+    print(f"[trace:{event}] {rendered}", file=sys.stderr)
+
+
 def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
     roles = config.get("roles")
     if not isinstance(roles, Mapping):
@@ -258,6 +266,7 @@ def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
         tool_registry=tool_registry,
         executor=executor,
         max_steps=int(pipeline_cfg.get("max_steps", 12)),
+        trace_handler=_debug_trace if bool(pipeline_cfg.get("debug", False)) else None,
     )
     return pipeline, list(backends.values())
 
@@ -294,7 +303,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
     config = _resolve_config(args)
     pipeline, backends = build_runtime(config)
     history: list[dict[str, str]] = []
-    print("SeparationOfPowers ready. /exit ile çık, /config ile aktif ayarı gör.")
+    print(
+        "SeparationOfPowers ready. /exit ile çık, /config ile aktif ayarı gör, "
+        "/clear ile konuşma geçmişini temizle."
+    )
     try:
         while True:
             try:
@@ -308,6 +320,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 break
             if prompt == "/config":
                 print(json.dumps(config, ensure_ascii=False, indent=2))
+                continue
+            if prompt == "/clear":
+                history.clear()
+                print("Konuşma geçmişi temizlendi.")
                 continue
             try:
                 response = pipeline.run(prompt, conversation_history=history)
@@ -367,6 +383,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         executor = pipeline_cfg.get("executor")
         print(f"  tool_registry={registry or '<none>'}")
         print(f"  executor={executor or '<none>'}")
+        print(f"  debug={bool(pipeline_cfg.get('debug', False))}")
     print("OK" if ok else "Configuration has issues.")
     return 0 if ok else 1
 
@@ -384,6 +401,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--tool-registry", help="Tool registry JSON path")
     parser.add_argument("--executor", help="Executor callable as module:function")
+    parser.add_argument("--debug", action="store_true", help="Print pipeline action/args/observation traces")
 
     for role in ROLE_NAMES:
         parser.add_argument(
