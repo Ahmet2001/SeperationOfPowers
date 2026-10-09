@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import io
+import sys
+import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import cli
+from runtime import speech as speech_module
 from runtime.speech import EMALightningSpeech, MODEL_REPO
 
 
@@ -34,6 +37,50 @@ class SpeechIntegrationTests(unittest.TestCase):
         factory.assert_called_once_with()
         self.assertEqual(model.say.call_count, 2)
         playback.assert_any_call("fake-pcm", 48000)
+
+    def test_default_ema_loader_selects_cpu_explicitly(self):
+        fake_torch = types.ModuleType("torch")
+        fake_torch.version = SimpleNamespace(cuda=None, hip=None)
+        fake_ema_module = types.ModuleType("ema_lightning")
+        constructor = Mock(return_value=object())
+        fake_ema_module.EMA = constructor
+
+        with patch.dict(
+            sys.modules, {"torch": fake_torch, "ema_lightning": fake_ema_module}
+        ):
+            speech_module._load_ema()
+
+        constructor.assert_called_once_with(device="cpu")
+
+    def test_default_ema_loader_rejects_cuda_enabled_torch(self):
+        fake_torch = types.ModuleType("torch")
+        fake_torch.version = SimpleNamespace(cuda="12.8", hip=None)
+        fake_ema_module = types.ModuleType("ema_lightning")
+        constructor = Mock()
+        fake_ema_module.EMA = constructor
+
+        with patch.dict(
+            sys.modules, {"torch": fake_torch, "ema_lightning": fake_ema_module}
+        ):
+            with self.assertRaisesRegex(RuntimeError, "CPU-only PyTorch"):
+                speech_module._load_ema()
+
+        constructor.assert_not_called()
+
+    def test_default_ema_loader_rejects_rocm_torch(self):
+        fake_torch = types.ModuleType("torch")
+        fake_torch.version = SimpleNamespace(cuda=None, hip="6.3")
+        fake_ema_module = types.ModuleType("ema_lightning")
+        constructor = Mock()
+        fake_ema_module.EMA = constructor
+
+        with patch.dict(
+            sys.modules, {"torch": fake_torch, "ema_lightning": fake_ema_module}
+        ):
+            with self.assertRaisesRegex(RuntimeError, "CPU-only PyTorch"):
+                speech_module._load_ema()
+
+        constructor.assert_not_called()
 
     def test_empty_answer_does_not_load_tts(self):
         factory = Mock()
