@@ -17,15 +17,27 @@ MODEL_REPO = "canberkkkkkk/ema-lightning"
 
 def _load_ema() -> Any:
     try:
+        import torch
         from ema_lightning import EMA
     except ImportError as exc:
         raise RuntimeError(
-            "Speech için EMA Lightning kurulu değil. "
-            'Python 3.11+ ortamında: python -m pip install -e ".[speech]"'
+            "Speech için EMA Lightning ve CPU-only PyTorch gerekli. "
+            "Kurulum: bash scripts/install_speech_cpu.sh "
+            "(Python 3.11+ gerektirir)."
         ) from exc
-    # The upstream EMA() constructor fetches its model weights from
-    # canberkkkkkk/ema-lightning on first use, then uses the local HF cache.
-    return EMA()
+
+    # Avoid silently accepting a CUDA/ROCm build in the CPU-only speech mode.
+    # PyTorch CPU wheel uses torch.version.cuda == torch.version.hip == None.
+    if torch.version.cuda is not None or getattr(torch.version, "hip", None) is not None:
+        raise RuntimeError(
+            "Speech için GPU destekli PyTorch bulundu. "
+            "CPU-only PyTorch kurmak için: bash scripts/install_speech_cpu.sh"
+        )
+
+    # The upstream EMA constructor downloads model weights from
+    # canberkkkkkk/ema-lightning once, then reuses the local HF cache.
+    # Explicitly use CPU, regardless of whether a GPU is available.
+    return EMA(device="cpu")
 
 
 def _play_audio(audio: Any, sample_rate: int) -> None:
