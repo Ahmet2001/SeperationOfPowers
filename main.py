@@ -10,6 +10,11 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.local_tools import BUILTIN_TOOL_REGISTRY, execute_builtin_local
+from runtime.mail_clarification import (
+    clarification_question,
+    is_mail_send_request,
+    missing_mail_details,
+)
 from yasama.yasama import YasamaRuntime
 from yargi.yargi import YargiRuntime
 from yurutme.yurutme import YurutmeRuntime
@@ -51,6 +56,7 @@ class AgentPipeline:
         self.respond_handler = respond_handler
         self.clarification_handler = clarification_handler
         self.trace_handler = trace_handler
+        self.last_action: str | None = None
 
     def _trace(self, event: str, **payload: Any) -> None:
         if self.trace_handler is not None:
@@ -61,6 +67,7 @@ class AgentPipeline:
         user_prompt: str,
         conversation_history: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
+        self.last_action = None
         history = list(conversation_history or [])
         observations: list[dict[str, Any]] = []
         state: dict[str, Any] = {
@@ -74,12 +81,30 @@ class AgentPipeline:
         for step_index in range(self.max_steps):
             state["step_index"] = step_index
 
-            action = self.yasama.run(
+            model_action = self.yasama.run(
                 user_prompt=user_prompt,
                 conversation_history=history,
                 state=state,
             )
-            self._trace("yasama", step=step_index, action=action)
+            action = model_action
+
+            # Validator/policy sits between action selection and execution.
+            # The small generic Yasama model may select SEND_MAIL before the
+            # user has supplied the required recipient, subject and body.
+            if is_mail_send_request(user_prompt):
+                missing = missing_mail_details(user_prompt)
+                if missing:
+                    action = "ASK_CLARIFICATION"
+                    state["missing_mail_details"] = missing
+                elif action in {"RESPOND", "ASK_CLARIFICATION"}:
+                    # All mail slots are explicit and the user asked to send.
+                    action = "SEND_MAIL"
+
+            self.last_action = action
+            trace_fields = {"step": step_index, "action": action}
+            if action != model_action:
+                trace_fields["model_action"] = model_action
+            self._trace("yasama", **trace_fields)
 
             if action == "FINISH":
                 response = self.yargi.run(
@@ -104,11 +129,11 @@ class AgentPipeline:
 
             if action == "ASK_CLARIFICATION":
                 if self.clarification_handler is None:
-                    raise RuntimeError(
-                        "ASK_CLARIFICATION was selected, but the runtime "
-                        "clarification policy is not configured yet."
+                    response = clarification_question(
+                        tuple(state.get("missing_mail_details", ()))
                     )
-                response = self.clarification_handler(user_prompt, history, state)
+                else:
+                    response = self.clarification_handler(user_prompt, history, state)
                 self._trace("clarification", response=response)
                 return response
 
@@ -132,6 +157,24 @@ class AgentPipeline:
                 placeholder=placeholder,
             )
             self._trace("yurutme", step=step_index, action=action, arguments=arguments)
+
+            if action == "SEND_MAIL":
+                required = ("to", "subject", "body")
+                invalid = [
+                    field for field in required
+                    if not isinstance(arguments.get(field), str)
+                    or not arguments[field].strip()
+                ]
+                if invalid or set(arguments) != set(required):
+                    raise ValueError(
+                        "Yurutme must output only non-empty to/subject/body "
+                        "fields for SEND_MAIL; got " + repr(arguments)
+                    )
+                if arguments["to"].strip().casefold() not in user_prompt.casefold():
+                    raise ValueError(
+                        "SEND_MAIL recipient was not explicitly provided "
+                        "in the user's request."
+                    )
 
             if tool.get("_builtin_executor") == "local_readonly":
                 raw_observation = execute_builtin_local(action, arguments)
