@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.local_tools import BUILTIN_TOOL_REGISTRY, execute_builtin_local
+from runtime.tool_validation import validate_tool_arguments
 from runtime.mail_clarification import (
     clarification_question,
     is_mail_send_request,
@@ -163,6 +164,9 @@ class AgentPipeline:
                 action=action,
                 tool_schema=public_tool_schema,
                 placeholder=placeholder,
+            )
+            arguments = validate_tool_arguments(
+                action, arguments, public_tool_schema
             )
             self._trace("yurutme", step=step_index, action=action, arguments=arguments)
 
