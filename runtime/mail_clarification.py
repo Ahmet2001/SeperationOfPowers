@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 _EMAIL = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-_MAIL = re.compile(r"\b(?:mail|e[\s-]?posta)\b", re.I)
+_MAIL = re.compile(r"\b(?:mail|e[\s-]?posta)", re.I)
 _SEND = re.compile(r"(?:gönder|gonder|yolla|yollamak|atmak|atacağ|atacag|istiyorum|istiyoruz)", re.I)
 _SUBJECT = (
     re.compile(r"(?im)^\s*(?:konu|başlık)\s*[:=]\s*\S+"),
