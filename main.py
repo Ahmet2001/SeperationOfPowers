@@ -91,7 +91,7 @@ class AgentPipeline:
             # Validator/policy sits between action selection and execution.
             # The small generic Yasama model may select SEND_MAIL before the
             # user has supplied the required recipient, subject and body.
-            if is_mail_send_request(user_prompt):
+            if action == "SEND_MAIL" or is_mail_send_request(user_prompt):
                 # Never repeat a successful send when a small generic router
                 # chooses SEND_MAIL again after seeing the observation.
                 if any(
