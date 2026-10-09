@@ -92,13 +92,21 @@ class AgentPipeline:
             # The small generic Yasama model may select SEND_MAIL before the
             # user has supplied the required recipient, subject and body.
             if is_mail_send_request(user_prompt):
-                missing = missing_mail_details(user_prompt)
-                if missing:
-                    action = "ASK_CLARIFICATION"
-                    state["missing_mail_details"] = missing
-                elif action in {"RESPOND", "ASK_CLARIFICATION"}:
-                    # All mail slots are explicit and the user asked to send.
-                    action = "SEND_MAIL"
+                # Never repeat a successful send when a small generic router
+                # chooses SEND_MAIL again after seeing the observation.
+                if any(
+                    item["action"] == "SEND_MAIL" and item["status"] == "success"
+                    for item in observations
+                ):
+                    action = "FINISH"
+                else:
+                    missing = missing_mail_details(user_prompt)
+                    if missing:
+                        action = "ASK_CLARIFICATION"
+                        state["missing_mail_details"] = missing
+                    elif action in {"RESPOND", "ASK_CLARIFICATION"}:
+                        # All mail slots are explicit and the user asked to send.
+                        action = "SEND_MAIL"
 
             self.last_action = action
             trace_fields = {"step": step_index, "action": action}
