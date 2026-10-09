@@ -87,6 +87,15 @@ class MailClarificationTests(unittest.TestCase):
         self.assertEqual(len(observations), 1)
         self.assertEqual(observations[0][0], "SEND_MAIL")
 
+    def test_successful_mail_is_not_sent_twice(self):
+        pipeline, _, observations = self.make_pipeline()
+        pipeline.yasama.run = lambda **kwargs: "SEND_MAIL"
+        result = pipeline.run(
+            'demo@example.org adresine "Tanışma" başlıklı kısa bir selamlama maili gönder.'
+        )
+        self.assertEqual(result, "İşlem tamamlandı.")
+        self.assertEqual(len(observations), 1)
+
     def test_invalid_mail_arguments_never_reach_executor(self):
         yurutme = FakeYurutme(answer={"role": "assistant", "content": "Bilgileri yazın."})
         pipeline, _, observations = self.make_pipeline(yurutme=yurutme)
@@ -96,6 +105,7 @@ class MailClarificationTests(unittest.TestCase):
 
     def test_clarification_fields_and_intent(self):
         self.assertTrue(is_mail_send_request("Mail yollamak istiyorum"))
+        self.assertTrue(is_mail_send_request("Maili gönder"))
         self.assertEqual(
             missing_mail_details("Mail yollamak istiyorum"),
             ("to", "subject", "body"),
