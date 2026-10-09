@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from main import AgentPipeline
+from runtime.speech import EMALightningSpeech
 from runtime.mail_clarification import (
     is_mail_send_request,
     label_mail_clarification_answer,
@@ -44,6 +45,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tool_registry": None,
         "executor": None,
         "debug": False,
+        "speech": False,
     },
 }
 
@@ -125,6 +127,8 @@ def _resolve_config(args: argparse.Namespace) -> dict[str, Any]:
         config.setdefault("pipeline", {})["executor"] = args.executor
     if getattr(args, "debug", False):
         config.setdefault("pipeline", {})["debug"] = True
+    if getattr(args, "speech", False):
+        config.setdefault("pipeline", {})["speech"] = True
 
     return config
 
@@ -292,12 +296,32 @@ def _history_add(history: list[dict[str, str]], user: str, assistant: str) -> No
     history.append({"role": "assistant", "content": assistant})
 
 
+def _speech_from_config(config: Mapping[str, Any]) -> EMALightningSpeech | None:
+    pipeline = config.get("pipeline", {})
+    if not isinstance(pipeline, Mapping) or not pipeline.get("speech", False):
+        return None
+    return EMALightningSpeech()
+
+
+def _speak_answer(speaker: EMALightningSpeech | None, answer: str) -> None:
+    if speaker is None:
+        return
+    try:
+        speaker.speak(answer)
+    except Exception as exc:
+        # Audio problems should not turn a successful text response into a
+        # failed agent turn or prevent subsequent chat messages.
+        print(f"[speech:error] {exc}", file=sys.stderr)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config = _resolve_config(args)
     pipeline, backends = build_runtime(config)
+    speaker = _speech_from_config(config)
     try:
         response = pipeline.run(args.prompt)
         print(response)
+        _speak_answer(speaker, response)
         return 0
     finally:
         _close_backends(backends)
@@ -306,6 +330,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 def cmd_chat(args: argparse.Namespace) -> int:
     config = _resolve_config(args)
     pipeline, backends = build_runtime(config)
+    speaker = _speech_from_config(config)
     history: list[dict[str, str]] = []
     pending_mail_request: str | None = None
     pending_mail_question: str | None = None
@@ -371,6 +396,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 pending_mail_request = None
                 pending_mail_question = None
             _history_add(history, prompt, response)
+            _speak_answer(speaker, response)
         return 0
     finally:
         _close_backends(backends)
@@ -423,6 +449,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"  tool_registry={registry or '<none>'}")
         print(f"  executor={executor or '<none>'}")
         print(f"  debug={bool(pipeline_cfg.get('debug', False))}")
+        print(f"  speech={bool(pipeline_cfg.get('speech', False))}")
     print("OK" if ok else "Configuration has issues.")
     return 0 if ok else 1
 
@@ -441,6 +468,11 @@ def _add_runtime_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tool-registry", help="Tool registry JSON path")
     parser.add_argument("--executor", help="Executor callable as module:function")
     parser.add_argument("--debug", action="store_true", help="Print pipeline action/args/observation traces")
+    parser.add_argument(
+        "--speech",
+        action="store_true",
+        help="Speak the final answer aloud using EMA Lightning Turkish TTS",
+    )
 
     for role in ROLE_NAMES:
         parser.add_argument(
