@@ -20,23 +20,55 @@ a small Turkish TTS model. Its upstream `ema-lightning` Python package
 downloads model weights (~34 MB) on first use and caches them locally; after
 that it can run offline. It does not use the Ollama server for TTS.
 
-Install into the project's virtual environment. The upstream TTS package
-supports **Python 3.11–3.13**:
+### Install speech with CPU-only PyTorch (recommended)
+
+EMA Lightning uses **CPU inference** in this CLI: `EMA(device="cpu")`.
+PyTorch must also be a CPU-only wheel. The upstream TTS package requires
+`torch>=2.1`; a plain `pip install -e ".[speech]"` **may install a CUDA-enabled
+PyTorch build on Linux**, so use the installer below instead.
+
+EMA Lightning supports **Python 3.11–3.13**. Activate a virtual environment
+created with one of these versions, then run the installer:
 
 ```bash
+cd ~/Masaüstü/SeperationOfPowers
 source .venv/bin/activate
 python --version
-sudo apt install libportaudio2          # Ubuntu, if PortAudio is absent
-python -m pip install -e ".[speech]"
+bash scripts/install_speech_cpu.sh
 ```
 
-If you have no NVIDIA GPU and want a CPU-only PyTorch installation, install
-the CPU PyTorch wheel first, then install the speech extra:
+The script installs/reinstalls `torch>=2.1` using PyTorch's **official CPU wheel
+index** (`https://download.pytorch.org/whl/cpu`), installs the optional
+`ema-lightning` and `sounddevice` dependencies, then **verifies**
+`torch.version.cuda is None` and `torch.version.hip is None`. It uses your
+active virtual environment and never uses `sudo`.
+
+Equivalent manual installation:
 
 ```bash
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install --upgrade --force-reinstall "torch>=2.1" \
+  --index-url https://download.pytorch.org/whl/cpu
 python -m pip install -e ".[speech]"
+python -c 'import torch; print(torch.__version__, torch.version.cuda)'
 ```
+
+On Ubuntu, if PortAudio is missing, install the system library separately:
+
+```bash
+sudo apt install libportaudio2
+```
+
+**If CUDA PyTorch was already installed:** switching to a CPU wheel removes
+the GPU-enabled `torch` build but may leave unused `nvidia-*` CUDA dependency
+packages in that virtual environment. For maximum disk savings, create a
+**fresh Python 3.11–3.13 virtual environment** and run the installer there;
+do not indiscriminately uninstall CUDA packages used by other projects.
+
+Speech remains optional: `python -m pip install -e .` alone does **not** add
+PyTorch. Enabling `--speech` with a GPU-enabled PyTorch build prints a
+`[speech:error]` explaining how to switch, while the text response remains
+available. There is no download of the EMA model weights until speech's
+first use.
 
 Example chat with the models installed in Ollama:
 
