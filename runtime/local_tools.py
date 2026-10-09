@@ -12,6 +12,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+# Only skip generated dependency/cache trees on broad workspace searches.
+SEARCH_IGNORED_DIRS = frozenset({
+    ".git", ".venv", "venv", "__pycache__", ".pytest_cache",
+    ".mypy_cache", "node_modules",
+})
+
+
 BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "FILE_LIST": {
         "description": (
@@ -209,6 +216,11 @@ def execute_builtin_local(
             iterator = base.rglob(pattern) if recursive else base.glob(pattern)
             matches: list[dict[str, Any]] = []
             for path in iterator:
+                if any(
+                    part in SEARCH_IGNORED_DIRS
+                    for part in path.relative_to(base).parts[:-1]
+                ):
+                    continue
                 if not path.is_file():
                     continue
                 try:
