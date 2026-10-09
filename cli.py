@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from main import AgentPipeline
+from runtime.mail_clarification import (
+    is_mail_send_request,
+    label_mail_clarification_answer,
+)
 from runtime import LibMercanBackend, LlamaCppBackend, MercanCliBackend, OllamaBackend
 from yasama.yasama import YasamaRuntime
 from yargi.yargi import YargiRuntime
@@ -303,6 +307,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
     config = _resolve_config(args)
     pipeline, backends = build_runtime(config)
     history: list[dict[str, str]] = []
+    pending_mail_request: str | None = None
+    pending_mail_question: str | None = None
     print(
         "SeparationOfPowers ready. /exit ile çık, /config ile aktif ayarı gör, "
         "/clear ile konuşma geçmişini temizle."
@@ -323,14 +329,47 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 continue
             if prompt == "/clear":
                 history.clear()
+                pending_mail_request = None
+                pending_mail_question = None
                 print("Konuşma geçmişi temizlendi.")
                 continue
+            if pending_mail_request is not None and prompt.casefold() in {
+                "iptal", "vazgeçtim", "vazgectim", "maili iptal et"
+            }:
+                pending_mail_request = None
+                pending_mail_question = None
+                print("Mail hazırlama iptal edildi.")
+                continue
+
+            effective_prompt = prompt
+            if pending_mail_request is not None:
+                followup = label_mail_clarification_answer(
+                    prompt, pending_mail_question or ""
+                )
+                effective_prompt = pending_mail_request + "\n" + followup
+
             try:
-                response = pipeline.run(prompt, conversation_history=history)
+                response = pipeline.run(
+                    effective_prompt, conversation_history=history
+                )
             except Exception as exc:
+                # A failed execution is not an unanswered clarification.
+                if pipeline.last_action != "ASK_CLARIFICATION":
+                    pending_mail_request = None
+                    pending_mail_question = None
                 print(f"[error] {exc}", file=sys.stderr)
                 continue
+
             print(response)
+            if (
+                pipeline.last_action == "ASK_CLARIFICATION"
+                and is_mail_send_request(effective_prompt)
+            ):
+                pending_mail_request = effective_prompt
+                pending_mail_question = response
+            else:
+                pending_mail_request = None
+                pending_mail_question = None
             _history_add(history, prompt, response)
         return 0
     finally:
