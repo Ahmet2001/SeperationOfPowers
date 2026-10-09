@@ -8,6 +8,64 @@ pip install -e .
 
 After that, use `mercan-sop` directly from the terminal.
 
+## Optional Turkish voice output: EMA Lightning
+
+Use `--speech` to read **the final user-visible answer** aloud after
+Yasama/Yurutme/Yargi produces it. The Yurutme role emits JSON tool arguments,
+so those are **not** read aloud; Yargi's answer (or an ASK_CLARIFICATION
+question) is voiced instead.
+
+Speech uses [canberkkkkkk/ema-lightning](https://huggingface.co/canberkkkkkk/ema-lightning),
+a small Turkish TTS model. Its upstream `ema-lightning` Python package
+downloads model weights (~34 MB) on first use and caches them locally; after
+that it can run offline. It does not use the Ollama server for TTS.
+
+Install into the project's virtual environment. The upstream TTS package
+supports **Python 3.11–3.13**:
+
+```bash
+source .venv/bin/activate
+python --version
+sudo apt install libportaudio2          # Ubuntu, if PortAudio is absent
+python -m pip install -e ".[speech]"
+```
+
+If you have no NVIDIA GPU and want a CPU-only PyTorch installation, install
+the CPU PyTorch wheel first, then install the speech extra:
+
+```bash
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -e ".[speech]"
+```
+
+Example chat with the models installed in Ollama:
+
+```bash
+mercan-sop chat --speech --debug \
+  --yasama-backend ollama --yasama-model qwen3:1.7b \
+  --yurutme-backend ollama --yurutme-model qwen3:1.7b \
+  --yargi-backend ollama --yargi-model qwen3:1.7b
+```
+
+One-shot mode:
+
+```bash
+mercan-sop run --speech \
+  --yasama-model qwen3:1.7b \
+  --yurutme-model qwen3:1.7b \
+  --yargi-model qwen3:1.7b \
+  "Merhaba, nasılsın?"
+```
+
+`--speech` is opt-in; plain runs do not import audio/TTS packages or download
+model weights. You can also enable it in JSON config with
+`{"pipeline":{"speech":true}}` or `--set pipeline.speech=true`.
+A TTS import, download, or speaker error is printed as `[speech:error]` and
+does not prevent successful text answers or the next chat turn. Audio playback
+requires a working local output device.
+
+Synthetic speech should be disclosed to listeners when used in a service.
+
 ## Direct model/backend test
 
 Use `model-test` when you want to verify that a model runtime works before entering the Yasama/Yurutme/Yargi pipeline.
