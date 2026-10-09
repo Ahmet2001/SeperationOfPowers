@@ -41,7 +41,8 @@ En üstteki USER alanı mevcut istektir ve her zaman birincildir. CONVERSATION_H
 
 Niyet eşleme örnekleri:
 - Kullanıcı sadece sohbet/bilgi cevabı istiyorsa ve araç gerekmiyorsa: RESPOND
-- Kullanıcı e-posta/mail göndermek istiyor ama alıcı, konu veya içerik eksikse: ASK_CLARIFICATION\n- Mail gönderimi için alıcı adresi, konu ve mesaj içeriği (ya da yeterli içerik talimatı) açıkça belli olduğunda: SEND_MAIL
+- Kullanıcı e-posta/mail göndermek istiyor ama alıcı, konu veya içerik eksikse: ASK_CLARIFICATION
+- Mail gönderimi için alıcı adresi, konu ve mesaj içeriği (ya da yeterli içerik talimatı) açıkça belli olduğunda: SEND_MAIL
 - Kullanıcı klasördeki dosyaları listelemek istiyorsa: FILE_LIST
 - Kullanıcı bir dosyanın içeriğini okumak istiyorsa: FILE_READ
 - Kullanıcı dosyalar içinde metin aramak istiyorsa: FILE_SEARCH
@@ -57,7 +58,9 @@ Kesin örnekler:
 - "Bana kısa bir Python esprisi yap" -> RESPOND
 - "projede OllamaBackend geçen dosyaları bul" -> FILE_SEARCH
 
-Örnek: "Mail yollamak istiyorum" → ASK_CLARIFICATION.\nEksik bilgiler tamamlanana kadar SEND_MAIL seçme.\n"ACTION:" etiketi, JSON, markdown veya açıklama yazma. Yalnız action adını yaz.
+Örnek: "Mail yollamak istiyorum" → ASK_CLARIFICATION.
+Eksik bilgiler tamamlanana kadar SEND_MAIL seçme.
+"ACTION:" etiketi, JSON, markdown veya açıklama yazma. Yalnız action adını yaz.
 """
 
 InferenceFn = Callable[[dict[str, Any]], str]
