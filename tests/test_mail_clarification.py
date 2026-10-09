@@ -99,7 +99,7 @@ class MailClarificationTests(unittest.TestCase):
     def test_invalid_mail_arguments_never_reach_executor(self):
         yurutme = FakeYurutme(answer={"role": "assistant", "content": "Bilgileri yazın."})
         pipeline, _, observations = self.make_pipeline(yurutme=yurutme)
-        with self.assertRaisesRegex(ValueError, "to/subject/body"):
+        with self.assertRaisesRegex(ValueError, "unexpected argument fields"):
             pipeline.run('demo@example.org adresine "Tanışma" başlıklı kısa bir selamlama maili gönder.')
         self.assertEqual(observations, [])
 
