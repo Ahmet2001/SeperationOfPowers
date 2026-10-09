@@ -7,6 +7,7 @@ from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
 from runtime.output_parsing import parse_json_object
+from runtime.tool_validation import validate_tool_arguments
 from runtime.serialization import serialize_yurutme_input
 
 
@@ -18,6 +19,9 @@ Action seçme, kullanıcıya cevap verme ve açıklama ekleme.
 En üstteki USER alanı mevcut istektir ve her zaman birincildir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki isteğin argümanlarını yeni USER isteğine kopyalama.
 Kullanıcının belirttiği filtreleri koru. Örneğin "Python dosyalarını listele" ve FILE_LIST için pattern "*.py" olmalıdır; "JSON dosyaları" için "*.json" kullan.
 PLACEHOLDER yalnızca beklenen alanların iskeletidir. Kullanıcı isteği daha spesifikse placeholder default'unu körü körüne kopyalama.
+TOOL_SCHEMA / STATE / ACTION / USER / CONVERSATION_HISTORY anahtarlarını sonuç JSON'una kopyalama.
+Örnek: USER: Projede "OllamaBackend" kelimesinin geçtiği Python dosyalarını ara. ACTION: FILE_SEARCH
+Çıktı: {"query":"OllamaBackend","path":".","pattern":"*.py","recursive":true,"max_results":50}
 """
 
 InferenceFn = Callable[[dict[str, Any]], Mapping[str, Any] | str]
@@ -64,16 +68,31 @@ class YurutmeRuntime:
             "placeholder": dict(placeholder) if placeholder is not None else None,
         }
 
-        raw_arguments = self._infer(payload)
-        if isinstance(raw_arguments, str):
-            raw_arguments = parse_json_object(raw_arguments)
+        correction: str | None = None
+        attempts = 2 if self._backend is not None else 1
+        for attempt in range(attempts):
+            raw_arguments = self._infer(payload, correction=correction)
+            try:
+                if isinstance(raw_arguments, str):
+                    raw_arguments = parse_json_object(raw_arguments)
+                return validate_tool_arguments(
+                    action, raw_arguments, payload["tool_schema"]
+                )
+            except (ValueError, TypeError) as exc:
+                if attempt + 1 == attempts:
+                    raise ValueError(
+                        f"Yurutme could not produce valid {action} arguments: {exc}"
+                    ) from exc
+                correction = str(exc)
 
-        if not isinstance(raw_arguments, Mapping):
-            raise TypeError("Yurutme output must be a JSON object.")
+        raise AssertionError("Unreachable Yurutme retry state.")
 
-        return dict(raw_arguments)
-
-    def _infer(self, payload: dict[str, Any]) -> Mapping[str, Any] | str:
+    def _infer(
+        self,
+        payload: dict[str, Any],
+        *,
+        correction: str | None = None,
+    ) -> Mapping[str, Any] | str:
         if self._inference_fn is not None:
             return self._inference_fn(payload)
 
@@ -92,6 +111,28 @@ class YurutmeRuntime:
                     ),
                 },
             ]
+            if correction is not None:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Önceki JSON yanlış: " + correction
+                        + "\nYalnızca mevcut ACTION'ın TOOL_SCHEMA.parameters "
+                        "alanına uygun argüman JSON nesnesini üret. "
+                        "Gerekli alanları doldur; prompt'u veya tool_schema'yı "
+                        "yanıta kopyalama."
+                    ),
+                })
+
+            structured = getattr(self._backend, "generate_structured", None)
+            parameters = payload["tool_schema"].get("parameters")
+            if (
+                callable(structured)
+                and isinstance(parameters, Mapping)
+                and parameters.get("type") == "object"
+            ):
+                return structured(
+                    messages, schema=parameters, config=self._generation_config
+                )
             return self._backend.generate(messages, config=self._generation_config)
 
         raise RuntimeError(
