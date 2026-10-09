@@ -9,6 +9,7 @@ final answer), so thinking is disabled by default for this backend.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from .backends import ChatMessage, GenerationConfig, _normalized_messages, _post_json
 
@@ -39,8 +40,29 @@ class OllamaBackend:
         *,
         config: GenerationConfig | None = None,
     ) -> str:
+        return self._generate(messages, config=config)
+
+    def generate_structured(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        schema: Mapping[str, Any],
+        config: GenerationConfig | None = None,
+    ) -> str:
+        """Request Ollama-native JSON Schema constrained output."""
+        if schema.get("type") != "object":
+            raise ValueError("Structured Ollama output requires an object JSON schema.")
+        return self._generate(messages, config=config, schema=schema)
+
+    def _generate(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        config: GenerationConfig | None = None,
+        schema: Mapping[str, Any] | None = None,
+    ) -> str:
         cfg = config or GenerationConfig()
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": _normalized_messages(messages),
             "stream": False,
@@ -54,6 +76,8 @@ class OllamaBackend:
                 "repeat_last_n": cfg.repeat_last_n,
             },
         }
+        if schema is not None:
+            payload["format"] = dict(schema)
         response = _post_json(
             f"{self.base_url}/api/chat",
             payload,
