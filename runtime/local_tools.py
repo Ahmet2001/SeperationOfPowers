@@ -223,6 +223,11 @@ def execute_builtin_local(
                     continue
                 if not path.is_file():
                     continue
+                # A symlinked file can point outside the approved workspace.
+                try:
+                    path.resolve().relative_to(root)
+                except ValueError:
+                    continue
                 try:
                     if path.stat().st_size > 2_000_000:
                         continue
