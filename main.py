@@ -15,7 +15,6 @@ from runtime.mail_clarification import (
     clarification_question,
     is_mail_cancel_request,
     is_mail_send_request,
-    is_simple_chat_request,
     missing_mail_details,
 )
 from yasama.yasama import YasamaRuntime
@@ -98,11 +97,6 @@ class AgentPipeline:
             # authorizes a send.
             if is_mail_cancel_request(user_prompt):
                 action = "RESPOND"
-            elif is_simple_chat_request(user_prompt):
-                # "Nasılsın?" is never a mail send or clarification.
-                # Do not pass unrelated earlier mail history to Yargi.
-                action = "RESPOND"
-                history = []
             elif is_mail_send_request(user_prompt):
                 if any(
                     item["action"] == "SEND_MAIL" and item["status"] == "success"
@@ -136,6 +130,12 @@ class AgentPipeline:
                         else fresh_action
                     )
 
+            # FINISH only makes sense after an observation in THIS run.
+            # Otherwise it skips the new user question and Yargi may
+            # regurgitate a previous answer from conversation history.
+            if action == "FINISH" and not observations:
+                action = "RESPOND"
+
             self.last_action = action
             trace_fields = {"step": step_index, "action": action}
             if action != model_action:
@@ -152,9 +152,7 @@ class AgentPipeline:
                 return response
 
             if action == "RESPOND":
-                if is_mail_cancel_request(user_prompt):
-                    response = "Tamam, mail göndermeyeceğim."
-                elif self.respond_handler is not None:
+                if self.respond_handler is not None:
                     response = self.respond_handler(user_prompt, history, state)
                 else:
                     response = self.yargi.run(
