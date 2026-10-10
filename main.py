@@ -15,6 +15,7 @@ from runtime.mail_clarification import (
     clarification_question,
     is_mail_cancel_request,
     is_mail_send_request,
+    is_simple_chat_request,
     missing_mail_details,
 )
 from yasama.yasama import YasamaRuntime
@@ -96,6 +97,9 @@ class AgentPipeline:
             # or request mail details unless the current prompt explicitly
             # authorizes a send.
             if is_mail_cancel_request(user_prompt):
+                action = "RESPOND"
+            elif is_simple_chat_request(user_prompt):
+                # "Nasılsın?" is never a mail send or clarification.
                 action = "RESPOND"
             elif is_mail_send_request(user_prompt):
                 if any(
