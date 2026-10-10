@@ -12,9 +12,10 @@ import re
 
 _EMAIL = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 _MAIL = re.compile(r"\b(?:mail|e[\s-]?posta)", re.I)
-_SEND = re.compile(r"(?:gönder|gonder|yolla|yollamak|atmak|atacağ|atacag|istiyorum|istiyoruz)", re.I)
+_SEND = re.compile(r"(?:gönder|gonder|yolla|yollamak|atmak|atacağ|atacag)", re.I)
 _MAIL_CANCEL = re.compile(
-    r"\b(?:iptal|vazgeçtim|vazgectim|boş\s*ver|bos\s*ver)\b"
+    r"^\s*(?:iptal|vazgeçtim|vazgectim|boş\s*ver|bos\s*ver)[.!?\s]*$"
+    r"|\b(?:mail|e[\s-]?posta)\w*[\s\S]{0,80}?\b(?:iptal|vazgeçtim|vazgectim)\b"
     r"|\b(?:mail|e[\s-]?posta)\w*\s+(?:gönderme|gonderme|yollama|atma)\b"
     r"|\b(?:mail|e[\s-]?posta)\w*[\s\S]{0,100}?"
     r"(?:göndermek|gondermek|yollamak|atmak|göndermeyi|gondermeyi|yollamayı)"
