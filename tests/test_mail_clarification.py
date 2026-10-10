@@ -209,7 +209,9 @@ class MailClarificationTests(unittest.TestCase):
             "Mail yollamak istemiyorum",
             conversation_history=[{"role": "user", "content": "Mail yollamak istiyorum"}],
         )
-        self.assertEqual(answer, "Tamam, mail göndermeyeceğim.")
+        # Cancellation must be handled as a normal response turn.
+        # The runtime must not hardcode a particular natural-language phrase.
+        self.assertEqual(answer, "İşlem tamamlandı.")
         self.assertEqual(pipeline.last_action, "RESPOND")
         self.assertEqual(yurutme.calls, 0)
         self.assertEqual(observations, [])
