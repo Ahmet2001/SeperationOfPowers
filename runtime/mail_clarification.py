@@ -48,6 +48,19 @@ def is_mail_send_request(text: str) -> bool:
     )
 
 
+_SMALL_TALK = re.compile(
+    r"^\s*(?:selam|merhaba|nasılsın|nasilsin|naber|iyi\s+misin|"
+    r"günaydın|gunaydin|iyi\s+akşamlar|iyi\s+aksamlar)"
+    r"[\s!?.,]*$",
+    re.I,
+)
+
+
+def is_simple_chat_request(text: str) -> bool:
+    """Recognize unambiguous greetings for conservative action routing."""
+    return bool(_SMALL_TALK.fullmatch(text))
+
+
 def missing_mail_details(text: str) -> tuple[str, ...]:
     """Required fields inferred only from explicit user wording.
 
