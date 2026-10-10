@@ -367,7 +367,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 pending_mail_question = None
                 response = "Tamam, mail göndermeyeceğim."
                 print(response)
-                _history_add(history, prompt, response)
+                # Cancellation is a control transition, not conversation
+                # context for future unrelated user requests.
                 _speak_answer(speaker, response)
                 continue
 
@@ -391,6 +392,13 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 continue
 
             print(response)
+            # Mail clarification is tracked in pending_mail_request, not
+            # generic conversation_history. Mixing them was making Yasama
+            # and Yargi answer later questions with an old mail response.
+            mail_turn = (
+                pending_mail_request is not None
+                or is_mail_send_request(effective_prompt)
+            )
             if (
                 pipeline.last_action == "ASK_CLARIFICATION"
                 and is_mail_send_request(effective_prompt)
@@ -400,7 +408,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
             else:
                 pending_mail_request = None
                 pending_mail_question = None
-            _history_add(history, prompt, response)
+            if not mail_turn:
+                _history_add(history, prompt, response)
             _speak_answer(speaker, response)
         return 0
     finally:
