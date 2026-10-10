@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -16,6 +17,8 @@ Gözlemlerde bulunmayan bilgi uydurma. Executor hata döndürdüyse başarı idd
 User mesajının ilk satırındaki mevcut istek her zaman birincildir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki bir isteğin cevabını yeni isteğe kopyalama.
 <tool_observations> boş değilse dosya yolu, içerik, arama sonucu, komut sonucu veya işlem başarısı gibi araçla ilgili tüm olguları yalnızca bu gözlemlerden al. Gözlemde olmayan klasör, dosya konumu veya sonuç uydurma.
 <tool_observations> boşsa önceki araç sonuçlarını anlatma; yalnız mevcut kullanıcı isteğine cevap ver.
+RUNTIME_INFO verilmişse, sistemde hangi rollerin ve araçların bulunduğuna dair sorularda yalnız o bilgileri kullan. Kurulu olmayan veya yapılandırılmamış araçların çalıştığını iddia etme.
+Kullanıcı yeni bir soru sorduğunda önceden verilen yanıtı tekrarlama. FINISH, RESPOND gibi action adlarını kullanıcıya açıklama olarak yazma.
 
 Çıktın doğrudan kullanıcıya gidecek doğal dil cevabı olmalıdır. JSON object, JSON wrapper, markdown code fence veya alan adı (response, result, file_summary vb.) kullanma.
 """
@@ -32,11 +35,13 @@ class YargiRuntime:
         *,
         backend: ChatBackend | None = None,
         generation_config: GenerationConfig | None = None,
+        runtime_info: Mapping[str, Any] | None = None,
     ) -> None:
         if inference_fn is not None and backend is not None:
             raise ValueError("Configure either inference_fn or backend, not both.")
         self._inference_fn = inference_fn
         self._backend = backend
+        self._runtime_info = dict(runtime_info or {})
         self._generation_config = generation_config or GenerationConfig(
             max_tokens=768,
             temperature=0.2,
@@ -44,6 +49,10 @@ class YargiRuntime:
             top_k=40,
             repeat_penalty=1.05,
         )
+
+    def set_runtime_info(self, info: Mapping[str, Any]) -> None:
+        """Supply actual configured role and tool information, not model guesses."""
+        self._runtime_info = dict(info)
 
     def run(
         self,
@@ -70,7 +79,17 @@ class YargiRuntime:
 
         if self._backend is not None:
             messages = [
-                {"role": "system", "content": YARGI_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": (
+                        YARGI_SYSTEM_PROMPT
+                        + (
+                            "\nRUNTIME_INFO:\n"
+                            + json.dumps(self._runtime_info, ensure_ascii=False)
+                            if self._runtime_info else ""
+                        )
+                    ),
+                },
                 {
                     "role": "user",
                     "content": serialize_yargi_input(
