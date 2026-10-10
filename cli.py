@@ -278,6 +278,29 @@ def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
         max_steps=int(pipeline_cfg.get("max_steps", 12)),
         trace_handler=_debug_trace if bool(pipeline_cfg.get("debug", False)) else None,
     )
+    # Runtime information is generated from the actual configuration, not
+    # invented by the model when asked "which tools/models are you using?".
+    has_external_executor = bool(pipeline_cfg.get("executor"))
+    yargi.set_runtime_info({
+        "roles": {
+            role: {
+                "backend": roles.get(role, {}).get("backend"),
+                "model": roles.get(role, {}).get("model"),
+            }
+            for role in ROLE_NAMES
+        },
+        "tools": {
+            action: {
+                "description": schema.get("description", ""),
+                "built_in": schema.get("_builtin_executor") == "local_readonly",
+                "external_executor_needed": (
+                    schema.get("_builtin_executor") != "local_readonly"
+                ),
+                "external_executor_configured": has_external_executor,
+            }
+            for action, schema in pipeline.tool_registry.items()
+        },
+    })
     return pipeline, list(backends.values())
 
 
