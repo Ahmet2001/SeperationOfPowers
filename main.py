@@ -13,6 +13,7 @@ from runtime.local_tools import BUILTIN_TOOL_REGISTRY, execute_builtin_local
 from runtime.tool_validation import validate_tool_arguments
 from runtime.mail_clarification import (
     clarification_question,
+    is_mail_cancel_request,
     is_mail_send_request,
     missing_mail_details,
 )
@@ -89,16 +90,19 @@ class AgentPipeline:
             )
             action = model_action
 
-            # Validator/policy sits between action selection and execution.
-            # The small generic Yasama model may select SEND_MAIL before the
-            # user has supplied the required recipient, subject and body.
-            if action == "SEND_MAIL" or is_mail_send_request(user_prompt):
-                # Never repeat a successful send when a small generic router
-                # chooses SEND_MAIL again after seeing the observation.
+            # Validate the CURRENT user's intent independently of chat history.
+            # Generic small models sometimes carry the previous SEND_MAIL
+            # action into unrelated turns such as "Nasılsın?". Never execute
+            # or request mail details unless the current prompt explicitly
+            # authorizes a send.
+            if is_mail_cancel_request(user_prompt):
+                action = "RESPOND"
+            elif is_mail_send_request(user_prompt):
                 if any(
                     item["action"] == "SEND_MAIL" and item["status"] == "success"
                     for item in observations
                 ):
+                    # Prevent duplicate delivery after a successful send.
                     action = "FINISH"
                 else:
                     missing = missing_mail_details(user_prompt)
@@ -106,8 +110,11 @@ class AgentPipeline:
                         action = "ASK_CLARIFICATION"
                         state["missing_mail_details"] = missing
                     elif action in {"RESPOND", "ASK_CLARIFICATION"}:
-                        # All mail slots are explicit and the user asked to send.
                         action = "SEND_MAIL"
+            elif action == "SEND_MAIL":
+                # Stale action from history is never a valid authorization.
+                # If work already ran this turn, synthesize its observations.
+                action = "FINISH" if observations else "RESPOND"
 
             self.last_action = action
             trace_fields = {"step": step_index, "action": action}
@@ -125,7 +132,9 @@ class AgentPipeline:
                 return response
 
             if action == "RESPOND":
-                if self.respond_handler is not None:
+                if is_mail_cancel_request(user_prompt):
+                    response = "Tamam, mail göndermeyeceğim."
+                elif self.respond_handler is not None:
                     response = self.respond_handler(user_prompt, history, state)
                 else:
                     response = self.yargi.run(
