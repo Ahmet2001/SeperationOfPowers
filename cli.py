@@ -13,6 +13,7 @@ from typing import Any, Mapping
 from main import AgentPipeline
 from runtime.speech import EMALightningSpeech
 from runtime.mail_clarification import (
+    is_mail_cancel_request,
     is_mail_send_request,
     label_mail_clarification_answer,
 )
@@ -358,12 +359,13 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 pending_mail_question = None
                 print("Konuşma geçmişi temizlendi.")
                 continue
-            if pending_mail_request is not None and prompt.casefold() in {
-                "iptal", "vazgeçtim", "vazgectim", "maili iptal et"
-            }:
+            if is_mail_cancel_request(prompt):
                 pending_mail_request = None
                 pending_mail_question = None
-                print("Mail hazırlama iptal edildi.")
+                response = "Tamam, mail göndermeyeceğim."
+                print(response)
+                _history_add(history, prompt, response)
+                _speak_answer(speaker, response)
                 continue
 
             effective_prompt = prompt
