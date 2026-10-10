@@ -143,6 +143,56 @@ class MailClarificationTests(unittest.TestCase):
         self.assertEqual(yurutme.calls, 0)
         self.assertEqual(observations, [])
 
+    def test_stale_mail_action_is_replanned_for_new_file_search(self):
+        from main import AgentPipeline
+
+        class ContextSensitiveRouter:
+            def __init__(self):
+                self.histories = []
+
+            def run(self, *, user_prompt, conversation_history, state):
+                self.histories.append(list(conversation_history))
+                if state["completed_actions"]:
+                    return "FINISH"
+                return "SEND_MAIL" if conversation_history else "FILE_SEARCH"
+
+        class SearchArgs:
+            def run(self, **kwargs):
+                self.action = kwargs["action"]
+                return {
+                    "query": "OllamaBackend", "path": ".", "pattern": "*.py",
+                    "recursive": True, "max_results": 5
+                }
+
+        router = ContextSensitiveRouter()
+        args = SearchArgs()
+        pipeline = AgentPipeline(
+            yasama=router,
+            yurutme=args,
+            yargi=FakeYargi(),
+            tool_registry={},
+            executor=lambda *_: self.fail("external executor should not be used"),
+        )
+        observation = {
+            "action": "FILE_SEARCH",
+            "data": {"matches": [{"path": "main.py", "line": 1, "text": "OllamaBackend"}]},
+            "status": "success",
+            "error": None,
+        }
+        with patch("main.execute_builtin_local", return_value=observation) as execute:
+            result = pipeline.run(
+                "Projede OllamaBackend geçen Python dosyalarını bul.",
+                conversation_history=[
+                    {"role": "user", "content": "Mail yollamak istiyorum"},
+                    {"role": "assistant", "content": "Hangi konuda mail yollamak istiyorsunuz?"},
+                ],
+            )
+        self.assertEqual(result, "İşlem tamamlandı.")
+        self.assertEqual(args.action, "FILE_SEARCH")
+        execute.assert_called_once()
+        self.assertTrue(router.histories[0])
+        self.assertEqual(router.histories[1], [])
+
     def test_refused_mail_is_never_treated_as_send(self):
         self.assertFalse(is_mail_send_request("Mail yollamak istemiyorum"))
         self.assertFalse(is_mail_send_request("Maili gönderme"))
