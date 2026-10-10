@@ -121,6 +121,15 @@ class MailClarificationTests(unittest.TestCase):
     def test_stale_send_mail_from_history_cannot_hijack_smalltalk(self):
         traces = []
         pipeline, yurutme, observations = self.make_pipeline(traces=traces)
+
+        class GreetingJudge:
+            def run(self, *, user_prompt, conversation_history, observations):
+                assert user_prompt == "Nasılsın"
+                assert conversation_history == []  # No stale mail context.
+                assert observations == []
+                return "İyiyim, teşekkürler."
+
+        pipeline.yargi = GreetingJudge()
         answer = pipeline.run(
             "Nasılsın",
             conversation_history=[
@@ -128,7 +137,7 @@ class MailClarificationTests(unittest.TestCase):
                 {"role": "assistant", "content": "Hangi konuda mail yollamak istiyorsunuz?"},
             ],
         )
-        self.assertEqual(answer, "İşlem tamamlandı.")
+        self.assertEqual(answer, "İyiyim, teşekkürler.")
         self.assertEqual(pipeline.last_action, "RESPOND")
         self.assertEqual(traces[0][1]["model_action"], "SEND_MAIL")
         self.assertEqual(yurutme.calls, 0)
@@ -137,6 +146,9 @@ class MailClarificationTests(unittest.TestCase):
     def test_refused_mail_is_never_treated_as_send(self):
         self.assertFalse(is_mail_send_request("Mail yollamak istemiyorum"))
         self.assertFalse(is_mail_send_request("Maili gönderme"))
+        self.assertFalse(is_mail_send_request("Mail adresimi öğrenmek istiyorum"))
+        self.assertTrue(is_mail_send_request("Mail göndermek istiyorum"))
+        self.assertFalse(is_mail_cancel_request("Toplantı iptal mi?"))
         self.assertTrue(is_mail_cancel_request("mail yollamak istemiyorum"))
         self.assertTrue(is_mail_cancel_request("Maili gönderme"))
         self.assertFalse(is_mail_cancel_request("Mail yollamak istiyorum"))
