@@ -13,6 +13,16 @@ import re
 _EMAIL = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 _MAIL = re.compile(r"\b(?:mail|e[\s-]?posta)", re.I)
 _SEND = re.compile(r"(?:gönder|gonder|yolla|yollamak|atmak|atacağ|atacag|istiyorum|istiyoruz)", re.I)
+_MAIL_CANCEL = re.compile(
+    r"\b(?:iptal|vazgeçtim|vazgectim|boş\s*ver|bos\s*ver)\b"
+    r"|\b(?:mail|e[\s-]?posta)\w*\s+(?:gönderme|gonderme|yollama|atma)\b"
+    r"|\b(?:mail|e[\s-]?posta)\w*[\s\S]{0,100}?"
+    r"(?:göndermek|gondermek|yollamak|atmak|göndermeyi|gondermeyi|yollamayı)"
+    r"\s+istemiyorum\b"
+    r"|\b(?:mail|e[\s-]?posta)\w*[\s\S]{0,100}?\b(?:istemiyorum|istemiyoruz)\b",
+    re.I,
+)
+
 _SUBJECT = (
     re.compile(r"(?im)^\s*(?:konu|başlık)\s*[:=]\s*\S+"),
     re.compile(r"""["“'][^"”']+["”']\s*(?:başlıklı|konulu)""", re.I),
@@ -24,9 +34,18 @@ _BODY = (
 )
 
 
+def is_mail_cancel_request(text: str) -> bool:
+    """True for an explicit cancellation or a negated mail-send request."""
+    return bool(_MAIL_CANCEL.search(text))
+
+
 def is_mail_send_request(text: str) -> bool:
-    """True only for a request to send mail, not a question about email."""
-    return bool(_MAIL.search(text) and _SEND.search(text))
+    """True only when a mail send is requested rather than declined."""
+    return bool(
+        _MAIL.search(text)
+        and _SEND.search(text)
+        and not is_mail_cancel_request(text)
+    )
 
 
 def missing_mail_details(text: str) -> tuple[str, ...]:
