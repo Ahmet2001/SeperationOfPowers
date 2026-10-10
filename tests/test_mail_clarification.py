@@ -11,7 +11,9 @@ import cli
 from main import AgentPipeline
 from runtime.mail_clarification import (
     clarification_question,
+    is_mail_cancel_request,
     is_mail_send_request,
+    is_simple_chat_request,
     missing_mail_details,
 )
 
@@ -115,6 +117,93 @@ class MailClarificationTests(unittest.TestCase):
             "Maili kime göndermek istiyorsunuz? E-posta adresini yazar mısınız?",
         )
         self.assertFalse(is_mail_send_request("Mail nedir?"))
+
+    def test_stale_send_mail_from_history_cannot_hijack_smalltalk(self):
+        traces = []
+        pipeline, yurutme, observations = self.make_pipeline(traces=traces)
+        answer = pipeline.run(
+            "Nasılsın",
+            conversation_history=[
+                {"role": "user", "content": "Mail yollamak istiyorum"},
+                {"role": "assistant", "content": "Hangi konuda mail yollamak istiyorsunuz?"},
+            ],
+        )
+        self.assertEqual(answer, "İşlem tamamlandı.")
+        self.assertEqual(pipeline.last_action, "RESPOND")
+        self.assertEqual(traces[0][1]["model_action"], "SEND_MAIL")
+        self.assertEqual(yurutme.calls, 0)
+        self.assertEqual(observations, [])
+
+    def test_refused_mail_is_never_treated_as_send(self):
+        self.assertFalse(is_mail_send_request("Mail yollamak istemiyorum"))
+        self.assertFalse(is_mail_send_request("Maili gönderme"))
+        self.assertTrue(is_mail_cancel_request("mail yollamak istemiyorum"))
+        self.assertTrue(is_mail_cancel_request("Maili gönderme"))
+        self.assertFalse(is_mail_cancel_request("Mail yollamak istiyorum"))
+        self.assertTrue(is_simple_chat_request("Nasılsın?"))
+
+        pipeline, yurutme, observations = self.make_pipeline()
+        answer = pipeline.run(
+            "Mail yollamak istemiyorum",
+            conversation_history=[{"role": "user", "content": "Mail yollamak istiyorum"}],
+        )
+        self.assertEqual(answer, "Tamam, mail göndermeyeceğim.")
+        self.assertEqual(pipeline.last_action, "RESPOND")
+        self.assertEqual(yurutme.calls, 0)
+        self.assertEqual(observations, [])
+
+    def test_chat_continues_normally_after_missing_mail_executor(self):
+        pipeline, yurutme, _ = self.make_pipeline(
+            executor=lambda action, args: (_ for _ in ()).throw(
+                RuntimeError("no mail executor")
+            )
+        )
+        args = cli.build_parser().parse_args(["chat"])
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("cli.build_runtime", return_value=(pipeline, [])), patch(
+            "builtins.input",
+            side_effect=[
+                "Mail yollamak istiyorum",
+                "Tanışma",
+                "demo@example.org",
+                "Merhaba, tanışmak isterim.",
+                "Nasılsın",
+                "mail yollamak istemiyorum",
+                "/exit",
+            ],
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.cmd_chat(args)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            stdout.getvalue().count("Hangi konuda mail yollamak istiyorsunuz?"),
+            1,
+        )
+        self.assertIn("Tamam, mail göndermeyeceğim.", stdout.getvalue())
+        self.assertIn("[error] no mail executor", stderr.getvalue())
+        self.assertEqual(yurutme.calls, 1)
+
+    def test_chat_cancellation_during_mail_does_not_send(self):
+        pipeline, yurutme, observations = self.make_pipeline()
+        args = cli.build_parser().parse_args(["chat"])
+        stdout = io.StringIO()
+        with patch("cli.build_runtime", return_value=(pipeline, [])), patch(
+            "builtins.input",
+            side_effect=[
+                "Mail yollamak istiyorum",
+                "mail yollamak istemiyorum",
+                "Nasılsın",
+                "/exit",
+            ],
+        ), redirect_stdout(stdout):
+            code = cli.cmd_chat(args)
+        self.assertEqual(code, 0)
+        self.assertIn("Tamam, mail göndermeyeceğim.", stdout.getvalue())
+        self.assertEqual(
+            stdout.getvalue().count("Hangi konuda mail yollamak istiyorsunuz?"),
+            1,
+        )
+        self.assertEqual(yurutme.calls, 0)
+        self.assertEqual(observations, [])
 
     def test_chat_preserves_pending_mail_intent_until_fields_supplied(self):
         pipeline, _, observations = self.make_pipeline()
