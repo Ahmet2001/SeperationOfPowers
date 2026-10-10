@@ -52,14 +52,12 @@ Niyet eşleme örnekleri:
 - Kullanıcı Python/kod parçasını çalıştırmak istiyorsa: CODE_EXECUTE
 - Gerekli araç işleri başarıyla bittiyse: FINISH
 
-Kesin örnekler:
-- "ls -la komutunu çalıştır" -> SHELL_EXECUTE
-- "print(2+2) kodunu çalıştır" -> CODE_EXECUTE
-- "Bana kısa bir Python esprisi yap" -> RESPOND
-- "projede OllamaBackend geçen dosyaları bul" -> FILE_SEARCH
-
-Örnek: "Mail yollamak istiyorum" → ASK_CLARIFICATION.
-Eksik bilgiler tamamlanana kadar SEND_MAIL seçme.
+Önemli karar kuralları:
+- FINISH yalnızca mevcut turdaki STATE.recent_observations alanında bir araç gözlemi varsa seçilebilir. Önceki konuşmanın bitmesi, mevcut turun FINISH olması anlamına gelmez.
+- Önceki konuşmadaki eylem veya cevap, kullanıcının şu anki isteğine dönüşmemelidir.
+- Kullanıcı yeni bir bilgi sorusu soruyorsa veya sohbet ediyorsa RESPOND seç.
+- Araç çağrısı için zorunlu bilgiler eksikse ASK_CLARIFICATION seç; eksik verileri uydurup aracı çağırma.
+- Yan etkili eylemler (örneğin mail gönderme) yalnızca kullanıcının mevcut talebiyle gerekçelendirilebilir.
 "ACTION:" etiketi, JSON, markdown veya açıklama yazma. Yalnız action adını yaz.
 """
 
