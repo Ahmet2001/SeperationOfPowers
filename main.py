@@ -119,11 +119,22 @@ class AgentPipeline:
                         action = "SEND_MAIL"
             elif action == "SEND_MAIL":
                 # Stale action from history is never a valid authorization.
-                # If work already ran this turn, synthesize its observations.
-                action = "FINISH" if observations else "RESPOND"
-                if not observations:
-                    # Do not let Yargi copy prior mail requests either.
+                if observations:
+                    action = "FINISH"
+                else:
+                    # A fresh single retry allows the router to recover
+                    # FILE_SEARCH/FILE_READ/etc. for the new unrelated request.
                     history = []
+                    fresh_action = self.yasama.run(
+                        user_prompt=user_prompt,
+                        conversation_history=history,
+                        state=state,
+                    )
+                    action = (
+                        "RESPOND"
+                        if fresh_action in {"SEND_MAIL", "FINISH"}
+                        else fresh_action
+                    )
 
             self.last_action = action
             trace_fields = {"step": step_index, "action": action}
