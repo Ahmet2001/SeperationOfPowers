@@ -35,6 +35,11 @@ _BODY = (
 )
 
 
+def mentions_mail(text: str) -> bool:
+    """Whether the text actually refers to email."""
+    return bool(_MAIL.search(text))
+
+
 def is_mail_cancel_request(text: str) -> bool:
     """True for an explicit cancellation or a negated mail-send request."""
     return bool(_MAIL_CANCEL.search(text))
