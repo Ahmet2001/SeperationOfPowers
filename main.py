@@ -100,7 +100,9 @@ class AgentPipeline:
                 action = "RESPOND"
             elif is_simple_chat_request(user_prompt):
                 # "Nasılsın?" is never a mail send or clarification.
+                # Do not pass unrelated earlier mail history to Yargi.
                 action = "RESPOND"
+                history = []
             elif is_mail_send_request(user_prompt):
                 if any(
                     item["action"] == "SEND_MAIL" and item["status"] == "success"
@@ -119,6 +121,9 @@ class AgentPipeline:
                 # Stale action from history is never a valid authorization.
                 # If work already ran this turn, synthesize its observations.
                 action = "FINISH" if observations else "RESPOND"
+                if not observations:
+                    # Do not let Yargi copy prior mail requests either.
+                    history = []
 
             self.last_action = action
             trace_fields = {"step": step_index, "action": action}
