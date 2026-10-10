@@ -16,6 +16,7 @@ from runtime.mail_clarification import (
     is_mail_cancel_request,
     is_mail_send_request,
     label_mail_clarification_answer,
+    mentions_mail,
 )
 from runtime import LibMercanBackend, LlamaCppBackend, MercanCliBackend, OllamaBackend
 from yasama.yasama import YasamaRuntime
@@ -359,7 +360,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 pending_mail_question = None
                 print("Konuşma geçmişi temizlendi.")
                 continue
-            if is_mail_cancel_request(prompt):
+            if is_mail_cancel_request(prompt) and (
+                pending_mail_request is not None or mentions_mail(prompt)
+            ):
                 pending_mail_request = None
                 pending_mail_question = None
                 response = "Tamam, mail göndermeyeceğim."
