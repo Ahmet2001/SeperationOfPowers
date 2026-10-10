@@ -1,0 +1,27 @@
+{
+  "roles": {
+    "yasama": {
+      "backend": "ollama",
+      "model": "mercan-yasama",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    "yurutme": {
+      "backend": "llamacpp",
+      "model": "mercan-yurutme",
+      "base_url": "http://127.0.0.1:8080"
+    },
+    "yargi": {
+      "backend": "libmercan",
+      "model": "/models/yargi.mercan",
+      "library": "/opt/mercan/lib/libmercan.so",
+      "threads": 8,
+      "gpu_layers": 0,
+      "n_ctx": 4096
+    }
+  },
+  "pipeline": {
+    "max_steps": 12,
+    "tool_registry": null,
+    "executor": null
+  }
+}

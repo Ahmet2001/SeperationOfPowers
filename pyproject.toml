@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mercan-separation-of-powers"
+version = "0.1.0"
+description = "Mercan Yasama/Yurutme/Yargi runtime pipeline"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+speech = ["ema-lightning", "sounddevice>=0.5"]
+
+[project.scripts]
+mercan-sop = "cli_entry:main"
+
+[tool.setuptools]
+py-modules = ["cli", "cli_entry", "main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["runtime*", "yasama*", "yurutme*", "yargi*"]
