@@ -194,7 +194,7 @@ class LlamaCppBackend:
 class MercanCliBackend:
     """Adapter for the custom Mercan runtime CLI backed by libmercan.
 
-    ``mercanApp-test1`` builds ``mercan`` as an executable linked against
+    ``MercanRuntime`` builds ``mercan`` as an executable linked against
     ``libmercan``.  Using that executable keeps this Python project independent
     of whether libmercan itself was built static or shared.
     """

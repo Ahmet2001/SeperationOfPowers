@@ -8,8 +8,8 @@ Supported adapters:
 
 - `OllamaBackend`: Ollama native `/api/chat`
 - `LlamaCppBackend`: llama.cpp OpenAI-compatible `/v1/chat/completions`
-- `MercanCliBackend`: the `mercan` executable from `mercanApp-test1`
-- `LibMercanBackend`: direct in-process ctypes binding to the custom `libmercan` C ABI
+- `MercanCliBackend`: the `mercan` executable from MercanRuntime
+- `LibMercanBackend`: in-process EthosoftLib SDK adapter over `libmercan`
 
 ## Ollama
 
@@ -41,7 +41,7 @@ yurutme = YurutmeRuntime(backend=backend)
 
 ## libmercan through the Mercan CLI
 
-`MercanCliBackend` is the simplest portable boundary. It works with the normal `mercanApp-test1` build where `libmercan` is static and the `mercan` executable is linked against it.
+`MercanCliBackend` runs the installed MercanRuntime CLI. The executable can be linked to static `libmercan`.
 
 ```python
 from runtime import MercanCliBackend
@@ -60,13 +60,20 @@ A Hugging Face model reference accepted by the Mercan CLI can also be used as `m
 
 ## Direct in-process libmercan
 
-`LibMercanBackend` talks directly to the public `mercan.h` C ABI with Python `ctypes`. There is no subprocess and no HTTP server in this path.
+`LibMercanBackend` delegates to `ethosoftlib.mercan.Model.generate(messages)`.
+EthosoftLib owns the native bindings, ABI validation, model/context lifetime,
+formatting and sampling. Requests contain the complete role transcript and
+never read or update SDK chat history. There is no subprocess or HTTP server.
 
-Build `mercanApp-test1` as a shared library first:
+Install the SDK (0.5.1 or later) and build MercanRuntime as a shared library:
 
 ```bash
-git clone https://github.com/Ahmet2001/mercanApp-test1.git
-cd mercanApp-test1
+# For local development, install the sibling SDK checkout first:
+python -m pip install -e /path/to/EthosoftLib
+python -m pip install -e '.[mercan]'
+
+git clone https://github.com/Ahmet2001/MercanRuntime.git
+cd MercanRuntime
 ./scripts/prepare_llama.sh
 cmake -S . -B build -DMERCAN_BUILD_SHARED=ON
 cmake --build build -j
@@ -88,7 +95,7 @@ backend = LibMercanBackend(
 yasama = YasamaRuntime(backend=backend)
 ```
 
-The direct backend mirrors the generation loop in `mercanApp-test1/cli/main.cpp`:
+The SDK runs the generation loop through the public native C API:
 
 ```text
 mercan_model_load
@@ -122,6 +129,34 @@ backend = LibMercanBackend(
 ```
 
 Unlike `MercanCliBackend`, the direct backend expects a local model path; Hugging Face pull/cache resolution belongs outside the C ABI adapter.
+
+The `library` setting is optional when EthosoftLib bundles the shared library
+or `ETHOSOFT_MERCAN_LIBRARY` points to it. Existing `threads`, `threads_batch`,
+`gpu_layers`, `n_ctx`, `n_batch`, model options, plugins and custom role names
+are forwarded to the SDK. `timeout_seconds` is not enforced for in-process
+generation; cancellation in the SDK is cooperative between decode calls.
+
+For all three roles, copy `sop.libmercan.example.json`, replace the model
+paths with checkpoints trained for the respective role contracts, and run
+`mercan-sop chat --config your-config.json`. The native smoke test uses one
+general SFT model for all adapters to check transport and lifetime only; it
+does not establish role-specific routing or tool-argument accuracy.
+
+For a local build without altering an existing runtime checkout, run from
+EthosoftLib:
+
+```bash
+MERCAN_USE_LOCAL_SOURCE=1 MERCAN_SRC=/path/to/MercanRuntime \
+  MERCAN_JOBS=1 bash scripts/build_mercan_native_linux.sh
+```
+
+Run native adapter regressions with existing model artifacts:
+
+```bash
+ETHOSOFT_MERCAN_LIBRARY=/path/to/libmercan.so \
+ETHOSOFT_MERCAN_TEST_MODEL=/path/to/model.mercan \
+  python -m pytest -q tests/test_libmercan_integration.py
+```
 
 Use `close()` or a context manager when a model should be released explicitly:
 

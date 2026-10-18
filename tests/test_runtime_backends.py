@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import ctypes
-import random
+import tempfile
+from pathlib import Path
+from types import ModuleType
+from unittest.mock import MagicMock, patch
 import unittest
 
 from runtime import GenerationConfig, LibMercanBackend, MercanCliBackend
@@ -148,33 +150,46 @@ class RuntimeBackendTests(unittest.TestCase):
         )
         self.assertEqual(MercanCliBackend._strip_cli_logs(raw), "FILE_READ")
 
-    def test_libmercan_chat_format_matches_mercan_cli_roles(self) -> None:
-        formatted = LibMercanBackend._format_chat(
-            [
-                {"role": "system", "content": "Sistem"},
-                {"role": "user", "content": "Merhaba"},
-            ]
-        )
-        self.assertEqual(
-            formatted,
-            "<|im_start|>sistem\nSistem<|im_end|>\n"
-            "<|im_start|>kullanici\nMerhaba<|im_end|>\n"
-            "<|im_start|>asistan\n",
-        )
+    def test_libmercan_delegates_messages_options_and_lifetime_to_sdk(self) -> None:
+        sdk = ModuleType("ethosoftlib.mercan")
+        sdk.MercanRuntime = MagicMock()
+        sdk.Model = MagicMock()
+        sdk.Model.return_value.generate.return_value = "FILE_READ"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.mercan"
+            path.touch()
+            with patch.dict("sys.modules", {"ethosoftlib.mercan": sdk}):
+                backend = LibMercanBackend(path, library="/test/libmercan.so", threads=2,
+                                           threads_batch=3, plugins=["/test/plugin.so"])
+                runtime = sdk.MercanRuntime.return_value
+                runtime.load_plugin.assert_called_once_with("/test/plugin.so")
+                sdk.MercanRuntime.assert_called_once_with(library_path="/test/libmercan.so")
+                self.assertEqual(sdk.Model.call_args.kwargs["threads_batch"], 3)
+                self.assertEqual(sdk.Model.call_args.kwargs["system_prompt"], "")
+                messages = [{"role": "system", "content": "Yasama"},
+                            {"role": "user", "content": "Dosyayı oku"}]
+                self.assertEqual(backend.generate(messages, config=GenerationConfig(max_tokens=12)), "FILE_READ")
+                sdk.Model.return_value.generate.assert_called_once_with(
+                    messages, max_tokens=12, temperature=0.0, top_k=40, top_p=1.0,
+                    repeat_penalty=1.0, repeat_last_n=64)
+                backend.close()
+                backend.close()
+                sdk.Model.return_value.close.assert_called_once()
+                with self.assertRaisesRegex(RuntimeError, "closed"):
+                    backend.generate(messages)
 
-    def test_libmercan_greedy_sampling_chooses_highest_logit(self) -> None:
-        logits = (ctypes.c_float * 3)(0.1, 3.0, 1.5)
-        token = LibMercanBackend._sample_token(
-            logits_ptr=logits,
-            n_vocab=3,
-            temperature=0.0,
-            top_k=3,
-            top_p=1.0,
-            repeat_penalty=1.0,
-            recent_tokens=[],
-            rng=random.Random(0),
-        )
-        self.assertEqual(token, 1)
+    def test_libmercan_releases_runtime_if_model_load_fails(self) -> None:
+        sdk = ModuleType("ethosoftlib.mercan")
+        sdk.MercanRuntime = MagicMock()
+        sdk.Model = MagicMock()
+        sdk.MercanRuntime.return_value.load_model.side_effect = RuntimeError("invalid model")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.mercan"
+            path.touch()
+            with patch.dict("sys.modules", {"ethosoftlib.mercan": sdk}):
+                with self.assertRaisesRegex(RuntimeError, "invalid model"):
+                    LibMercanBackend(path)
+            sdk.MercanRuntime.return_value.close.assert_called_once()
 
 
 if __name__ == "__main__":

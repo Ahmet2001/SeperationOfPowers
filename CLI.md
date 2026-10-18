@@ -132,6 +132,12 @@ mercan-sop model-test mercan-cli /models/model.mercan \
 
 Direct libmercan example:
 
+This backend uses EthosoftLib 0.5.1+ in the same process. For local development,
+install the SDK checkout with `python -m pip install -e /path/to/EthosoftLib`,
+then install this project with `python -m pip install -e '.[mercan]'`.
+The SDK can find its bundled library automatically, or use the explicit
+`--library` path below. See [runtime setup](runtime/README.md).
+
 ```bash
 mercan-sop model-test libmercan /models/model.mercan \
   --library /opt/mercan/lib/libmercan.so \
