@@ -65,7 +65,7 @@ EthosoftLib owns the native bindings, ABI validation, model/context lifetime,
 formatting and sampling. Requests contain the complete role transcript and
 never read or update SDK chat history. There is no subprocess or HTTP server.
 
-Install the SDK (0.5.1 or later) and build MercanRuntime as a shared library:
+Install the SDK (0.6.0 or later) and build MercanRuntime (0.2.0 or later) as a shared library:
 
 ```bash
 # For local development, install the sibling SDK checkout first:
@@ -95,9 +95,16 @@ backend = LibMercanBackend(
 yasama = YasamaRuntime(backend=backend)
 ```
 
-The SDK runs the generation loop through the public native C API:
+The SDK calls the versioned native chat API; the complete generation loop
+and sampling live in C++, shared with the CLI:
 
 ```text
+mercan_chat_begin_v1 -> mercan_generation_run_v1
+  -> tokenize -> batched prompt decode -> native sample -> token decode
+  -> output byte callback -> ... -> stop/limit/cancel
+mercan_generation_free_v1
+
+# The low-level decode/logits API remains available for custom integrations:
 mercan_model_load
   -> mercan_context_create
   -> mercan_tokenize

@@ -154,6 +154,7 @@ class RuntimeBackendTests(unittest.TestCase):
         sdk = ModuleType("ethosoftlib.mercan")
         sdk.MercanRuntime = MagicMock()
         sdk.Model = MagicMock()
+        sdk.Model.NATIVE_GENERATION_API_VERSION = 1
         sdk.Model.return_value.generate.return_value = "FILE_READ"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "model.mercan"
@@ -182,6 +183,7 @@ class RuntimeBackendTests(unittest.TestCase):
         sdk = ModuleType("ethosoftlib.mercan")
         sdk.MercanRuntime = MagicMock()
         sdk.Model = MagicMock()
+        sdk.Model.NATIVE_GENERATION_API_VERSION = 1
         sdk.MercanRuntime.return_value.load_model.side_effect = RuntimeError("invalid model")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "model.mercan"

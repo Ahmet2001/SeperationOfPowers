@@ -42,11 +42,12 @@ class LibMercanBackend:
                 "libmercan requires EthosoftLib. Install with pip install -e '.[mercan]' "
                 "or pip install -e /path/to/EthosoftLib."
             ) from exc
-        if not callable(getattr(Model, "generate", None)):
-            raise RuntimeError("EthosoftLib is missing Model.generate(messages); install the updated SDK.")
+        if getattr(Model, "NATIVE_GENERATION_API_VERSION", 0) != 1:
+            raise RuntimeError("EthosoftLib >=0.6.0 with native generation API v1 is required; update the SDK.")
         runtime = MercanRuntime(library_path=library)
         native_model = None
         try:
+            runtime.require_generation_api()
             for plugin in plugins or ():
                 runtime.load_plugin(plugin)
             native_model = runtime.load_model(
