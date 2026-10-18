@@ -165,6 +165,7 @@ def _build_backend(role: str, config: Mapping[str, Any]):
 
     if backend_name == "libmercan":
         return LibMercanBackend(
+            device=str(config.get("device", "auto")),
             model=str(model),
             library=str(config["library"]) if config.get("library") else None,
             gpu_layers=_optional_int(config.get("gpu_layers")),

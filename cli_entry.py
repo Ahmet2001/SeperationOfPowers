@@ -33,6 +33,7 @@ def build_model_test_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key")
     parser.add_argument("--binary", default="mercan")
     parser.add_argument("--library")
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--threads", type=int)
     parser.add_argument("--threads-batch", type=int)
     parser.add_argument("--gpu-layers", type=int)
@@ -70,6 +71,7 @@ def _model_test_backend_config(args: argparse.Namespace) -> dict[str, Any]:
         if args.plugin:
             config["plugins"] = list(args.plugin)
     elif args.backend == "libmercan":
+        config["device"] = args.device
         if args.library:
             config["library"] = args.library
         if args.threads is not None:

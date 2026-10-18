@@ -65,7 +65,7 @@ EthosoftLib owns the native bindings, ABI validation, model/context lifetime,
 formatting and sampling. Requests contain the complete role transcript and
 never read or update SDK chat history. There is no subprocess or HTTP server.
 
-Install the SDK (0.6.0 or later) and build MercanRuntime (0.2.0 or later) as a shared library:
+Install the SDK (0.7.0 or later) and build MercanRuntime (0.3.0 or later) as a shared library:
 
 ```bash
 # For local development, install the sibling SDK checkout first:
@@ -139,9 +139,18 @@ Unlike `MercanCliBackend`, the direct backend expects a local model path; Huggin
 
 The `library` setting is optional when EthosoftLib bundles the shared library
 or `ETHOSOFT_MERCAN_LIBRARY` points to it. Existing `threads`, `threads_batch`,
-`gpu_layers`, `n_ctx`, `n_batch`, model options, plugins and custom role names
+`device`, `gpu_layers`, `n_ctx`, `n_batch`, model options, plugins and custom role names
 are forwarded to the SDK. `timeout_seconds` is not enforced for in-process
 generation; cancellation in the SDK is cooperative between decode calls.
+
+`device="auto"` (default) uses usable CUDA, otherwise CPU. `device="cpu"`
+forces CPU. `device="cuda"` requires a CUDA-enabled shared library and
+usable GPU; it raises an error instead of falling back silently. A nonzero
+`gpu_layers` value with `auto` is also a strict CUDA request. The loaded
+backend's `device` property reports actual model weight placement.
+Set `"device": "cuda"` in the role's JSON config or pass it to
+`LibMercanBackend(...)`. Build CUDA libraries with `GGML_CUDA=ON`; a CPU-only
+shared library cannot enable CUDA through Python settings.
 
 For all three roles, copy `sop.libmercan.example.json`, replace the model
 paths with checkpoints trained for the respective role contracts, and run

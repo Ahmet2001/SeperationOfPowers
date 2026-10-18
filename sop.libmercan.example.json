@@ -4,21 +4,21 @@
       "backend": "libmercan",
       "model": "/models/yasama.mercan",
       "threads": 2,
-      "gpu_layers": 0,
+      "device": "auto",
       "n_ctx": 4096
     },
     "yurutme": {
       "backend": "libmercan",
       "model": "/models/yurutme.mercan",
       "threads": 2,
-      "gpu_layers": 0,
+      "device": "auto",
       "n_ctx": 4096
     },
     "yargi": {
       "backend": "libmercan",
       "model": "/models/yargi.mercan",
       "threads": 2,
-      "gpu_layers": 0,
+      "device": "auto",
       "n_ctx": 4096
     }
   },

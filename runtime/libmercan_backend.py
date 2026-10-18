@@ -23,6 +23,7 @@ class LibMercanBackend:
     def __init__(
         self, model: str | os.PathLike[str], *,
         library: str | os.PathLike[str] | None = None,
+        device: str = "auto",
         gpu_layers: int | None = None, use_mmap: bool | None = None,
         check_tensors: bool | None = None, n_ctx: int | None = None,
         n_batch: int | None = None, threads: int | None = None,
@@ -42,8 +43,9 @@ class LibMercanBackend:
                 "libmercan requires EthosoftLib. Install with pip install -e '.[mercan]' "
                 "or pip install -e /path/to/EthosoftLib."
             ) from exc
-        if getattr(Model, "NATIVE_GENERATION_API_VERSION", 0) != 1:
-            raise RuntimeError("EthosoftLib >=0.6.0 with native generation API v1 is required; update the SDK.")
+        if (getattr(Model, "NATIVE_GENERATION_API_VERSION", 0) != 1
+                or getattr(Model, "DEVICE_API_VERSION", 0) != 1):
+            raise RuntimeError("EthosoftLib >=0.7.0 with native generation/device API v1 is required; update the SDK.")
         runtime = MercanRuntime(library_path=library)
         native_model = None
         try:
@@ -51,7 +53,7 @@ class LibMercanBackend:
             for plugin in plugins or ():
                 runtime.load_plugin(plugin)
             native_model = runtime.load_model(
-                self.model_path, gpu_layers=gpu_layers,
+                self.model_path, device=device, gpu_layers=gpu_layers,
                 use_mmap=use_mmap, check_tensors=check_tensors,
             )
             self._sdk_model = Model(
@@ -65,6 +67,12 @@ class LibMercanBackend:
                 native_model.close()
             runtime.close()
             raise
+
+    @property
+    def device(self) -> str:
+        if self._sdk_model is None:
+            raise RuntimeError("LibMercanBackend is closed.")
+        return str(self._sdk_model.info()["device"])
 
     @property
     def version(self) -> str:

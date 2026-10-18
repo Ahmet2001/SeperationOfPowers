@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-mercan = ["ethosoftlib>=0.6.0"]
+mercan = ["ethosoftlib>=0.7.0"]
 speech = ["ema-lightning", "sounddevice>=0.5"]
 
 [project.scripts]

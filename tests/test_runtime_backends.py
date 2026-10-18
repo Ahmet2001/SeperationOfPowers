@@ -155,15 +155,17 @@ class RuntimeBackendTests(unittest.TestCase):
         sdk.MercanRuntime = MagicMock()
         sdk.Model = MagicMock()
         sdk.Model.NATIVE_GENERATION_API_VERSION = 1
+        sdk.Model.DEVICE_API_VERSION = 1
         sdk.Model.return_value.generate.return_value = "FILE_READ"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "model.mercan"
             path.touch()
             with patch.dict("sys.modules", {"ethosoftlib.mercan": sdk}):
-                backend = LibMercanBackend(path, library="/test/libmercan.so", threads=2,
+                backend = LibMercanBackend(path, library="/test/libmercan.so", device="cuda", threads=2,
                                            threads_batch=3, plugins=["/test/plugin.so"])
                 runtime = sdk.MercanRuntime.return_value
                 runtime.load_plugin.assert_called_once_with("/test/plugin.so")
+                self.assertEqual(runtime.load_model.call_args.kwargs["device"], "cuda")
                 sdk.MercanRuntime.assert_called_once_with(library_path="/test/libmercan.so")
                 self.assertEqual(sdk.Model.call_args.kwargs["threads_batch"], 3)
                 self.assertEqual(sdk.Model.call_args.kwargs["system_prompt"], "")
@@ -184,6 +186,7 @@ class RuntimeBackendTests(unittest.TestCase):
         sdk.MercanRuntime = MagicMock()
         sdk.Model = MagicMock()
         sdk.Model.NATIVE_GENERATION_API_VERSION = 1
+        sdk.Model.DEVICE_API_VERSION = 1
         sdk.MercanRuntime.return_value.load_model.side_effect = RuntimeError("invalid model")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "model.mercan"

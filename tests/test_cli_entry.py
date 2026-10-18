@@ -40,6 +40,7 @@ class ModelTestCliTests(unittest.TestCase):
             [
                 "libmercan",
                 "/models/model.mercan",
+                "--device", "cuda",
                 "--library",
                 "/opt/mercan/lib/libmercan.so",
                 "--threads",
@@ -55,6 +56,7 @@ class ModelTestCliTests(unittest.TestCase):
         config = _model_test_backend_config(args)
 
         self.assertEqual(config["library"], "/opt/mercan/lib/libmercan.so")
+        self.assertEqual(config["device"], "cuda")
         self.assertEqual(config["threads"], 8)
         self.assertEqual(config["gpu_layers"], -1)
         self.assertEqual(config["n_ctx"], 8192)
