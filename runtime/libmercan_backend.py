@@ -87,11 +87,14 @@ class LibMercanBackend:
         if self._sdk_model is None:
             raise RuntimeError("LibMercanBackend is closed.")
         cfg = config or GenerationConfig()
-        return self._sdk_model.generate(
+        text = self._sdk_model.generate(
             messages, max_tokens=cfg.max_tokens, temperature=cfg.temperature,
             top_k=cfg.top_k, top_p=cfg.top_p,
             repeat_penalty=cfg.repeat_penalty, repeat_last_n=cfg.repeat_last_n,
         )
+        # Checkpoints whose vocab lacks the ChatML special tokens emit
+        # "<|im_end|>" as plain text, which the native stop check cannot see.
+        return text.split("<|im_end|>", 1)[0]
 
     def close(self) -> None:
         model = self._sdk_model

@@ -6,6 +6,7 @@ YasamaRuntime, YurutmeRuntime and YargiRuntime.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -72,6 +73,7 @@ class AgentPipeline:
         self.last_action = None
         history = list(conversation_history or [])
         observations: list[dict[str, Any]] = []
+        executed_calls: set[tuple[str, str]] = set()
         state: dict[str, Any] = {
             "completed_actions": [],
             "last_observation": None,
@@ -214,6 +216,20 @@ class AgentPipeline:
                         "SEND_MAIL recipient was not explicitly provided "
                         "in the user's request."
                     )
+
+            # An identical call cannot yield a new observation; answer from
+            # what this run already has instead of looping to max_steps.
+            call = (action, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+            if call in executed_calls:
+                self._trace("repeat", step=step_index, action=action)
+                response = self.yargi.run(
+                    user_prompt=user_prompt,
+                    conversation_history=history,
+                    observations=observations,
+                )
+                self._trace("yargi", response=response)
+                return response
+            executed_calls.add(call)
 
             if tool.get("_builtin_executor") == "local_readonly":
                 raw_observation = execute_builtin_local(action, arguments)

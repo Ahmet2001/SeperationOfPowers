@@ -19,57 +19,83 @@ SEARCH_IGNORED_DIRS = frozenset({
 })
 
 
+def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+    }
+    if required:
+        schema["required"] = required
+    return schema
+
+
+# Descriptions are written for the models: what the tool does and when it is
+# the right choice.  Whether an executor is configured is reported separately
+# (RUNTIME_INFO), so it does not belong in the description text.
 BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "FILE_LIST": {
         "description": (
-            "List files in a local directory. Infer a glob pattern from the user request: "
-            "use '*.py' for Python files, '*.json' for JSON files, etc. Use '*' only when "
-            "the user did not request a file type/name filter."
+            "Bir klasördeki dosya ve klasörlerin adlarını listeler; içeriklerini okumaz. "
+            "Dosya türü istenmişse deseni istekten çıkar: Python dosyaları için '*.py', "
+            "JSON dosyaları için '*.json'. Filtre istenmediyse '*' kullan."
         ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "default": "."},
-                "pattern": {
-                    "type": "string",
-                    "description": "Glob filter inferred from the request, e.g. '*.py'.",
-                    "default": "*",
-                },
-                "recursive": {"type": "boolean", "default": False},
+        "parameters": _schema({
+            "path": {"type": "string", "description": "Listelenecek klasör.", "default": "."},
+            "pattern": {
+                "type": "string",
+                "description": "İstekten çıkarılan glob deseni, örneğin '*.py'.",
+                "default": "*",
             },
-            "additionalProperties": False,
-        },
+            "recursive": {
+                "type": "boolean",
+                "description": "Alt klasörler de listelensin mi?",
+                "default": False,
+            },
+        }, []),
         "placeholder": {"path": ".", "pattern": None, "recursive": False},
         "_builtin_executor": "local_readonly",
     },
     "FILE_READ": {
-        "description": "Read a UTF-8 text file from the local workspace.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "max_chars": {"type": "integer", "default": 20000},
+        "description": (
+            "Adı bilinen tek bir metin dosyasının içeriğini okur. Hangi dosyada "
+            "olduğu bilinmeyen bir metni aramak için FILE_SEARCH kullanılır."
+        ),
+        "parameters": _schema({
+            "path": {"type": "string", "description": "Okunacak dosyanın yolu."},
+            "max_chars": {
+                "type": "integer",
+                "description": "Okunacak en fazla karakter sayısı.",
+                "default": 20000,
             },
-            "required": ["path"],
-            "additionalProperties": False,
-        },
+        }, ["path"]),
         "placeholder": {"path": None, "max_chars": 20000},
         "_builtin_executor": "local_readonly",
     },
     "FILE_SEARCH": {
-        "description": "Search text inside files in the local workspace.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "path": {"type": "string", "default": "."},
-                "pattern": {"type": "string", "default": "*"},
-                "recursive": {"type": "boolean", "default": True},
-                "max_results": {"type": "integer", "default": 50},
+        "description": (
+            "Dosyaların içinde bir kelime veya metin arar ve geçtiği dosya ile "
+            "satırları döndürür. Dosya adı bilinip içeriği isteniyorsa FILE_READ kullanılır."
+        ),
+        "parameters": _schema({
+            "query": {"type": "string", "description": "Aranacak kelime veya metin."},
+            "path": {"type": "string", "description": "Aramanın yapılacağı klasör.", "default": "."},
+            "pattern": {
+                "type": "string",
+                "description": "Aranacak dosyaları sınırlayan glob deseni.",
+                "default": "*",
             },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
+            "recursive": {
+                "type": "boolean",
+                "description": "Alt klasörlerde de aransın mı?",
+                "default": True,
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "En fazla sonuç sayısı.",
+                "default": 50,
+            },
+        }, ["query"]),
         "placeholder": {
             "query": None,
             "path": ".",
@@ -79,56 +105,119 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "_builtin_executor": "local_readonly",
     },
-    "SEND_MAIL": {
+    "FILE_CREATE": {
         "description": (
-            "Send an email. This schema is available for argument generation, but actual "
-            "delivery requires an explicitly configured external executor."
+            "Yeni bir dosya oluşturur ve içine verilen içeriği yazar. Var olan bir "
+            "dosyanın bir kısmını değiştirmek için FILE_EDIT kullanılır."
         ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "to": {"type": "string", "description": "Recipient email address."},
-                "subject": {"type": "string", "description": "Email subject."},
-                "body": {"type": "string", "description": "Plain-text email body."},
+        "parameters": _schema({
+            "path": {"type": "string", "description": "Oluşturulacak dosyanın yolu."},
+            "content": {"type": "string", "description": "Dosyaya yazılacak içerik."},
+        }, ["path", "content"]),
+        "placeholder": {"path": None, "content": None},
+        "_executor_required": True,
+    },
+    "FILE_EDIT": {
+        "description": (
+            "Var olan bir dosyada belirli bir metni yenisiyle değiştirir. Yeni dosya "
+            "oluşturmak için FILE_CREATE kullanılır."
+        ),
+        "parameters": _schema({
+            "path": {"type": "string", "description": "Düzenlenecek dosyanın yolu."},
+            "old_text": {"type": "string", "description": "Dosyada değiştirilecek mevcut metin."},
+            "new_text": {"type": "string", "description": "Yerine yazılacak yeni metin."},
+        }, ["path", "old_text", "new_text"]),
+        "placeholder": {"path": None, "old_text": None, "new_text": None},
+        "_executor_required": True,
+    },
+    "FILE_DELETE": {
+        "description": "Bir dosyayı siler. Geri alınamaz; yalnızca kullanıcı açıkça silmeyi istediğinde kullanılır.",
+        "parameters": _schema({
+            "path": {"type": "string", "description": "Silinecek dosyanın yolu."},
+        }, ["path"]),
+        "placeholder": {"path": None},
+        "_executor_required": True,
+    },
+    "FILE_MOVE": {
+        "description": "Bir dosyayı başka bir klasöre taşır veya adını değiştirir.",
+        "parameters": _schema({
+            "source": {"type": "string", "description": "Taşınacak dosyanın mevcut yolu."},
+            "destination": {"type": "string", "description": "Dosyanın yeni yolu veya hedef klasör."},
+        }, ["source", "destination"]),
+        "placeholder": {"source": None, "destination": None},
+        "_executor_required": True,
+    },
+    "WEB_SEARCH": {
+        "description": (
+            "İnternette arama yapar ve sonuç başlıkları ile bağlantıları döndürür. "
+            "Adresi belli tek bir sayfayı açmak için WEB_OPEN kullanılır."
+        ),
+        "parameters": _schema({
+            "query": {"type": "string", "description": "Arama sorgusu."},
+            "max_results": {"type": "integer", "description": "En fazla sonuç sayısı.", "default": 5},
+        }, ["query"]),
+        "placeholder": {"query": None, "max_results": 5},
+        "_executor_required": True,
+    },
+    "WEB_OPEN": {
+        "description": "Adresi verilen tek bir web sayfasını açıp metnini getirir.",
+        "parameters": _schema({
+            "url": {"type": "string", "description": "Açılacak sayfanın tam adresi."},
+        }, ["url"]),
+        "placeholder": {"url": None},
+        "_executor_required": True,
+    },
+    "DOWNLOAD": {
+        "description": (
+            "Bir adresteki dosyayı indirip diske kaydeder. Sayfanın metnini okumak "
+            "için WEB_OPEN kullanılır."
+        ),
+        "parameters": _schema({
+            "url": {"type": "string", "description": "İndirilecek dosyanın adresi."},
+            "path": {
+                "type": "string",
+                "description": "Dosyanın kaydedileceği klasör veya yol.",
+                "default": ".",
             },
-            "required": ["to", "subject", "body"],
-            "additionalProperties": False,
-        },
-        "placeholder": {"to": None, "subject": None, "body": None},
+        }, ["url"]),
+        "placeholder": {"url": None, "path": "."},
         "_executor_required": True,
     },
     "SHELL_EXECUTE": {
         "description": (
-            "Execute a terminal/shell command. This schema only describes arguments; actual "
-            "execution requires an explicitly configured external executor."
+            "Kullanıcının istediği terminal komutunu çalıştırır. Python kodu "
+            "çalıştırmak için CODE_EXECUTE kullanılır."
         ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Exact shell command requested by the user."},
-                "cwd": {"type": "string", "default": "."},
-            },
-            "required": ["command"],
-            "additionalProperties": False,
-        },
+        "parameters": _schema({
+            "command": {"type": "string", "description": "Kullanıcının istediği komutun tam hali."},
+            "cwd": {"type": "string", "description": "Komutun çalışacağı klasör.", "default": "."},
+        }, ["command"]),
         "placeholder": {"command": None, "cwd": "."},
         "_executor_required": True,
     },
     "CODE_EXECUTE": {
         "description": (
-            "Execute a code snippet. This schema only describes arguments; actual execution "
-            "requires an explicitly configured external executor."
+            "Verilen kod parçasını çalıştırır ve çıktısını döndürür. Terminal "
+            "komutları için SHELL_EXECUTE kullanılır."
         ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "language": {"type": "string", "description": "Programming language, e.g. python."},
-                "code": {"type": "string", "description": "Code to execute."},
-            },
-            "required": ["language", "code"],
-            "additionalProperties": False,
-        },
+        "parameters": _schema({
+            "language": {"type": "string", "description": "Programlama dili, örneğin python."},
+            "code": {"type": "string", "description": "Çalıştırılacak kod."},
+        }, ["language", "code"]),
         "placeholder": {"language": "python", "code": None},
+        "_executor_required": True,
+    },
+    "SEND_MAIL": {
+        "description": (
+            "E-posta gönderir. Alıcı adresi, konu ve içerik kullanıcının isteğinde "
+            "açıkça bulunmalıdır."
+        ),
+        "parameters": _schema({
+            "to": {"type": "string", "description": "Alıcının e-posta adresi."},
+            "subject": {"type": "string", "description": "E-postanın konusu."},
+            "body": {"type": "string", "description": "Düz metin e-posta içeriği."},
+        }, ["to", "subject", "body"]),
+        "placeholder": {"to": None, "subject": None, "body": None},
         "_executor_required": True,
     },
 }

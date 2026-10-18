@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.local_tools import BUILTIN_TOOL_REGISTRY
 from runtime.output_parsing import parse_canonical_action
 from runtime.serialization import serialize_yasama_input
 
@@ -31,7 +32,7 @@ CANONICAL_ACTIONS = frozenset(
     }
 )
 
-YASAMA_SYSTEM_PROMPT = """Sen Mercan Yasama modelisin.
+_YASAMA_PROMPT_TEMPLATE = """Sen Mercan Yasama modelisin.
 Görevin kullanıcı isteği, konuşma geçmişi ve mevcut state'e bakarak yalnızca bir sonraki canonical action'ı seçmektir.
 Argüman üretme, açıklama yapma ve kullanıcıya final cevap yazma.
 Çıktın yalnızca aşağıdaki action isimlerinden tam olarak biri olmalıdır:
@@ -39,6 +40,7 @@ RESPOND, WEB_SEARCH, WEB_OPEN, FILE_READ, FILE_SEARCH, FILE_LIST, FILE_CREATE, F
 
 En üstteki USER alanı mevcut istektir ve her zaman birincildir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki isteğin action'ını yeni USER isteğine kopyalama.
 
+{action_descriptions}
 Niyet eşleme örnekleri:
 - Kullanıcı sadece sohbet/bilgi cevabı istiyorsa ve araç gerekmiyorsa: RESPOND
 - Kullanıcı e-posta/mail göndermek istiyor ama alıcı, konu veya içerik eksikse: ASK_CLARIFICATION
@@ -58,8 +60,126 @@ Niyet eşleme örnekleri:
 - Kullanıcı yeni bir bilgi sorusu soruyorsa veya sohbet ediyorsa RESPOND seç.
 - Araç çağrısı için zorunlu bilgiler eksikse ASK_CLARIFICATION seç; eksik verileri uydurup aracı çağırma.
 - Yan etkili eylemler (örneğin mail gönderme) yalnızca kullanıcının mevcut talebiyle gerekçelendirilebilir.
+
 "ACTION:" etiketi, JSON, markdown veya açıklama yazma. Yalnız action adını yaz.
 """
+
+_CONTROL_ACTION_DESCRIPTIONS = {
+    "RESPOND": "Araç gerekmeden doğrudan cevap verilecek sohbet veya bilgi soruları.",
+    "ASK_CLARIFICATION": (
+        "İstenen araç için zorunlu bilgi (örneğin mail alıcısı) eksikse "
+        "kullanıcıya soru sorulur."
+    ),
+    "FINISH": "Mevcut turda gerekli araç çalıştı ve sonucu STATE.recent_observations içinde.",
+}
+_ACTION_ORDER = (
+    "RESPOND", "WEB_SEARCH", "WEB_OPEN", "FILE_READ", "FILE_SEARCH", "FILE_LIST",
+    "FILE_CREATE", "FILE_EDIT", "FILE_DELETE", "FILE_MOVE", "CODE_EXECUTE",
+    "SHELL_EXECUTE", "DOWNLOAD", "SEND_MAIL", "ASK_CLARIFICATION", "FINISH",
+)
+
+
+def _action_descriptions() -> str:
+    """Describe actions from the same registry Yurutme receives schemas from."""
+    lines = ["Action'lar ve ne zaman seçilecekleri:"]
+    for action in _ACTION_ORDER:
+        description = _CONTROL_ACTION_DESCRIPTIONS.get(action)
+        if description is None:
+            description = BUILTIN_TOOL_REGISTRY[action]["description"]
+        lines.append(f"- {action}: {description}")
+    return "\n".join(lines) + "\n"
+
+
+YASAMA_SYSTEM_PROMPT = _YASAMA_PROMPT_TEMPLATE.replace(
+    "{action_descriptions}", _action_descriptions()
+)
+
+_EMPTY_STATE: dict[str, Any] = {
+    "completed_actions": [],
+    "last_observation": None,
+    "recent_observations": [],
+    "step_index": 0,
+    "turn_index": 0,
+}
+_LIST_OBSERVATION: dict[str, Any] = {
+    "action": "FILE_LIST",
+    "data": {"entries": ["docs/api.md"]},
+    "status": "success",
+    "error": None,
+}
+_READ_OBSERVATION: dict[str, Any] = {
+    "action": "FILE_READ",
+    "data": {"path": "README.md"},
+    "status": "success",
+    "error": None,
+}
+
+# Shown to the model as prior user/assistant turns rather than inline in the
+# system prompt: small checkpoints echo inline examples instead of following
+# them, but answer chat-turn examples with a bare action name.
+YASAMA_FEW_SHOT_EXAMPLES: tuple[tuple[str, list[dict[str, str]], dict[str, Any], str], ...] = (
+    ("Merhaba, nasılsın?", [], _EMPTY_STATE, "RESPOND"),
+    ("Bu klasördeki Python dosyalarını listele.", [], _EMPTY_STATE, "FILE_LIST"),
+    ("README.md dosyasını okuyup özetle.", [], _EMPTY_STATE, "FILE_READ"),
+    ('Projede "GenerationConfig" geçen yerleri bul.', [], _EMPTY_STATE, "FILE_SEARCH"),
+    ("İnternette Ankara hava durumunu ara.", [], _EMPTY_STATE, "WEB_SEARCH"),
+    ("git status komutunu çalıştır.", [], _EMPTY_STATE, "SHELL_EXECUTE"),
+    ("print(2+2) kodunu çalıştır.", [], _EMPTY_STATE, "CODE_EXECUTE"),
+    ("Mail göndermek istiyorum.", [], _EMPTY_STATE, "ASK_CLARIFICATION"),
+    (
+        'ali@ornek.com adresine "Toplantı" konulu, "Yarın 10\'da görüşelim." '
+        "içerikli bir mail gönder.",
+        [], _EMPTY_STATE, "SEND_MAIL",
+    ),
+    (
+        "README.md dosyasını okuyup özetle.",
+        [],
+        {
+            **_EMPTY_STATE,
+            "completed_actions": ["FILE_READ"],
+            "last_observation": _READ_OBSERVATION,
+            "recent_observations": [_READ_OBSERVATION],
+            "step_index": 1,
+        },
+        "FINISH",
+    ),
+    (
+        "docs klasöründeki dosyaları listele.",
+        [],
+        {
+            **_EMPTY_STATE,
+            "completed_actions": ["FILE_LIST"],
+            "last_observation": _LIST_OBSERVATION,
+            "recent_observations": [_LIST_OBSERVATION],
+            "step_index": 1,
+        },
+        "FINISH",
+    ),
+    (
+        "Türkiye'nin başkenti neresi?",
+        [
+            {"role": "user", "content": "Bu klasördeki dosyaları listele."},
+            {"role": "assistant", "content": "Klasörde main.py ve README.md var."},
+        ],
+        _EMPTY_STATE,
+        "RESPOND",
+    ),
+)
+
+
+def _few_shot_messages() -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for user_prompt, history, state, action in YASAMA_FEW_SHOT_EXAMPLES:
+        messages.append({
+            "role": "user",
+            "content": serialize_yasama_input(
+                user_prompt=user_prompt,
+                conversation_history=history,
+                state=state,
+            ),
+        })
+        messages.append({"role": "assistant", "content": action})
+    return messages
 
 InferenceFn = Callable[[dict[str, Any]], str]
 
@@ -108,6 +228,7 @@ class YasamaRuntime:
         if self._backend is not None:
             messages = [
                 {"role": "system", "content": YASAMA_SYSTEM_PROMPT},
+                *_few_shot_messages(),
                 {
                     "role": "user",
                     "content": serialize_yasama_input(

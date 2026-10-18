@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
+from unittest.mock import patch
 
 import cli
 from yargi.yargi import YargiRuntime
@@ -23,14 +25,19 @@ class RuntimeInfoTests(unittest.TestCase):
         config = json.loads(json.dumps(cli.DEFAULT_CONFIG))
         for role in ("yasama", "yurutme", "yargi"):
             config["roles"][role]["model"] = "qwen3:1.7b"
-        pipeline, _ = cli.build_runtime(config)
+        # Web tools are enabled by ETHOSOFT_SEARXNG_URL; keep the shell's out.
+        with patch.dict(os.environ, {}, clear=True):
+            pipeline, _ = cli.build_runtime(config)
         info = pipeline.yargi._runtime_info
         self.assertEqual(info["roles"]["yasama"]["model"], "qwen3:1.7b")
         self.assertTrue(info["tools"]["FILE_SEARCH"]["built_in"])
         self.assertFalse(info["tools"]["SEND_MAIL"]["built_in"])
         self.assertTrue(info["tools"]["SEND_MAIL"]["external_executor_needed"])
         self.assertFalse(info["tools"]["SEND_MAIL"]["external_executor_configured"])
-        self.assertNotIn("WEB_SEARCH", info["tools"])
+        # A schema without an executor must not be presented as usable.
+        self.assertFalse(info["tools"]["WEB_SEARCH"]["built_in"])
+        self.assertTrue(info["tools"]["WEB_SEARCH"]["external_executor_needed"])
+        self.assertFalse(info["tools"]["WEB_SEARCH"]["external_executor_configured"])
 
     def test_yargi_system_context_reflects_actual_tools(self):
         backend = FakeBackend()

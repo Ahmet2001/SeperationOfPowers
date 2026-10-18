@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
+from runtime.local_tools import BUILTIN_TOOL_REGISTRY
 from runtime.output_parsing import parse_json_object
 from runtime.tool_validation import validate_tool_arguments
 from runtime.serialization import serialize_yurutme_input
@@ -20,9 +22,107 @@ En üstteki USER alanı mevcut istektir ve her zaman birincildir. CONVERSATION_H
 Kullanıcının belirttiği filtreleri koru. Örneğin "Python dosyalarını listele" ve FILE_LIST için pattern "*.py" olmalıdır; "JSON dosyaları" için "*.json" kullan.
 PLACEHOLDER yalnızca beklenen alanların iskeletidir. Kullanıcı isteği daha spesifikse placeholder default'unu körü körüne kopyalama.
 TOOL_SCHEMA / STATE / ACTION / USER / CONVERSATION_HISTORY anahtarlarını sonuç JSON'una kopyalama.
-Örnek: USER: Projede "OllamaBackend" kelimesinin geçtiği Python dosyalarını ara. ACTION: FILE_SEARCH
-Çıktı: {"query":"OllamaBackend","path":".","pattern":"*.py","recursive":true,"max_results":50}
 """
+
+# Shown as prior user/assistant turns built from the built-in tool schemas.
+# Each request gets the examples for its own action plus one contrasting
+# action, which keeps the prompt near 1.6k tokens; inline system-prompt
+# examples were copied verbatim by small checkpoints instead of followed.
+# FILE_LIST and WEB_SEARCH carry two examples that differ in every value:
+# with a single example the model copied its values whatever they were, and
+# with none it copied the contrasting example (a "python" search query).
+# FILE_EDIT has none on purpose: its example was copied into a wrong edit,
+# while without one the model fails with invalid JSON and stops the pipeline.
+YURUTME_FEW_SHOT_EXAMPLES: dict[str, tuple[tuple[str, dict[str, Any]], ...]] = {
+    "FILE_LIST": (
+        (
+            "Bu klasördeki Python dosyalarını listele.",
+            {"path": ".", "pattern": "*.py", "recursive": False},
+        ),
+        (
+            "docs klasöründeki dosyaları listele.",
+            {"path": "docs", "pattern": "*", "recursive": False},
+        ),
+    ),
+    "FILE_READ": ((
+        "README.md dosyasını okuyup özetle.",
+        {"path": "README.md", "max_chars": 20000},
+    ),),
+    "FILE_SEARCH": ((
+        'Projede "GenerationConfig" geçen yerleri bul.',
+        {"query": "GenerationConfig", "path": ".", "pattern": "*",
+         "recursive": True, "max_results": 50},
+    ),),
+    "FILE_MOVE": ((
+        "rapor.pdf dosyasını belgeler klasörüne taşı.",
+        {"source": "rapor.pdf", "destination": "belgeler/rapor.pdf"},
+    ),),
+    "WEB_SEARCH": (
+        (
+            "İnternette 2026 Dünya Kupası maç takvimini ara.",
+            {"query": "2026 Dünya Kupası maç takvimi", "max_results": 5},
+        ),
+        (
+            "Webde Rust ile Python performans karşılaştırması bul.",
+            {"query": "Rust Python performans karşılaştırması", "max_results": 5},
+        ),
+    ),
+    "SHELL_EXECUTE": ((
+        "git status komutunu çalıştır.",
+        {"command": "git status", "cwd": "."},
+    ),),
+    "CODE_EXECUTE": ((
+        "print(2+2) kodunu çalıştır.",
+        {"language": "python", "code": "print(2+2)"},
+    ),),
+    "SEND_MAIL": ((
+        'ali@ornek.com adresine "Toplantı" konulu, "Yarın 10\'da görüşelim." '
+        "içerikli bir mail gönder.",
+        {"to": "ali@ornek.com", "subject": "Toplantı",
+         "body": "Yarın 10'da görüşelim."},
+    ),),
+}
+
+_EMPTY_STATE: dict[str, Any] = {
+    "completed_actions": [],
+    "last_observation": None,
+    "recent_observations": [],
+    "step_index": 0,
+    "turn_index": 0,
+}
+
+
+def _few_shot_messages(action: str) -> list[dict[str, str]]:
+    contrast = "SHELL_EXECUTE" if action == "CODE_EXECUTE" else "CODE_EXECUTE"
+    selected = [contrast] + ([action] if action in YURUTME_FEW_SHOT_EXAMPLES else [])
+    messages: list[dict[str, str]] = []
+    examples = [
+        (example_action, user_prompt, arguments)
+        for example_action in selected
+        for user_prompt, arguments in YURUTME_FEW_SHOT_EXAMPLES[example_action]
+    ]
+    for example_action, user_prompt, arguments in examples:
+        tool = BUILTIN_TOOL_REGISTRY[example_action]
+        messages.append({
+            "role": "user",
+            "content": serialize_yurutme_input(
+                user_prompt=user_prompt,
+                conversation_history=[],
+                state=_EMPTY_STATE,
+                action=example_action,
+                tool_schema={
+                    key: value for key, value in tool.items()
+                    if not key.startswith("_")
+                },
+                placeholder=tool.get("placeholder"),
+            ),
+        })
+        messages.append({
+            "role": "assistant",
+            "content": json.dumps(arguments, ensure_ascii=False),
+        })
+    return messages
+
 
 InferenceFn = Callable[[dict[str, Any]], Mapping[str, Any] | str]
 
@@ -99,6 +199,7 @@ class YurutmeRuntime:
         if self._backend is not None:
             messages = [
                 {"role": "system", "content": YURUTME_SYSTEM_PROMPT},
+                *_few_shot_messages(payload["action"]),
                 {
                     "role": "user",
                     "content": serialize_yurutme_input(

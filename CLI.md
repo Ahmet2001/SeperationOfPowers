@@ -245,6 +245,27 @@ mercan-sop chat \
   --set roles.yargi.library=/opt/mercan/lib/libmercan.so
 ```
 
+## Web search and page reading (SearXNG)
+
+`WEB_SEARCH` and `WEB_OPEN` run through EthosoftLib's `ethosoftlib.web` client
+against a self-hosted SearXNG instance with the JSON format enabled. They are
+off until a SearXNG URL is configured; there is no fallback to a public search
+engine.
+
+```bash
+export ETHOSOFT_SEARXNG_URL=http://localhost:8888
+mercan-sop chat --config sop.json
+```
+
+or, per config, `--set pipeline.searxng_url=http://localhost:8888`. The config
+value wins over the environment variable.
+
+`WEB_OPEN` only fetches public http(s) URLs; loopback and private-network
+addresses are refused because the URL comes from a model. Search results are
+capped at 8 and page text at 4000 characters to keep observations inside the
+model context. A failed request is reported to Yargi as an error observation.
+`DOWNLOAD` writes to disk and still requires an explicit `--executor`.
+
 ## Tool registry and executor hooks
 
 The CLI launches the model pipeline; actual tool execution remains an explicit runtime dependency.

@@ -12,7 +12,7 @@ from runtime.serialization import (
     serialize_yasama_input,
     serialize_yurutme_input,
 )
-from yasama.yasama import YasamaRuntime
+from yasama.yasama import CANONICAL_ACTIONS, YasamaRuntime
 from yargi.yargi import YargiRuntime
 from yurutme.yurutme import YurutmeRuntime
 
@@ -40,10 +40,21 @@ class RuntimeBackendTests(unittest.TestCase):
         )
 
         self.assertEqual(action, "FILE_READ")
-        self.assertEqual(backend.calls[0][0][0]["role"], "system")
-        self.assertEqual(backend.calls[0][0][1]["role"], "user")
-        self.assertIn("USER:\nmain.py dosyasını oku", backend.calls[0][0][1]["content"])
-        self.assertIn("STATE:\n{", backend.calls[0][0][1]["content"])
+        messages = backend.calls[0][0]
+        self.assertEqual(messages[0]["role"], "system")
+        # Few-shot examples precede the request as alternating user/assistant
+        # turns whose answers are bare canonical actions.
+        examples = messages[1:-1]
+        self.assertTrue(examples)
+        self.assertEqual(
+            [m["role"] for m in examples],
+            ["user", "assistant"] * (len(examples) // 2),
+        )
+        for answer in examples[1::2]:
+            self.assertIn(answer["content"], CANONICAL_ACTIONS)
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertIn("USER:\nmain.py dosyasını oku", messages[-1]["content"])
+        self.assertIn("STATE:\n{", messages[-1]["content"])
 
     def test_yurutme_parses_backend_json(self) -> None:
         backend = FakeBackend('{"path":"main.py"}')
@@ -59,7 +70,15 @@ class RuntimeBackendTests(unittest.TestCase):
         )
 
         self.assertEqual(arguments, {"path": "main.py"})
-        prompt = backend.calls[0][0][1]["content"]
+        messages = backend.calls[0][0]
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(
+            [m["role"] for m in messages[1:-1]], ["user", "assistant"] * 2
+        )
+        self.assertIn("ACTION:\nCODE_EXECUTE", messages[1]["content"])
+        self.assertIn("ACTION:\nFILE_READ", messages[3]["content"])
+        prompt = messages[-1]["content"]
+        self.assertIn("USER:\nmain.py dosyasını oku", prompt)
         self.assertIn("ACTION:\nFILE_READ", prompt)
         self.assertIn("TOOL_SCHEMA:\n{", prompt)
         self.assertIn('PLACEHOLDER:\n{\n  "path": null\n}', prompt)
@@ -82,9 +101,41 @@ class RuntimeBackendTests(unittest.TestCase):
         )
 
         self.assertEqual(response, "main.py dosyası okundu.")
-        prompt = backend.calls[0][0][1]["content"]
+        messages = backend.calls[0][0]
+        examples = messages[1:-1]
+        self.assertEqual(
+            [m["role"] for m in examples],
+            ["user", "assistant"] * (len(examples) // 2),
+        )
+        # Examples must cover both outcomes so the model does not learn to
+        # report a single one regardless of the real observation.
+        self.assertIn('"status": "success"', "".join(m["content"] for m in examples))
+        self.assertIn('"status": "error"', "".join(m["content"] for m in examples))
+        prompt = messages[-1]["content"]
         self.assertTrue(prompt.startswith("main.py dosyasını oku\n<tool_observations>\n["))
         self.assertTrue(prompt.endswith("\n</tool_observations>"))
+
+    def test_yargi_replays_history_as_chat_turns_without_examples(self) -> None:
+        backend = FakeBackend("Ankara.")
+        runtime = YargiRuntime(backend=backend)
+
+        runtime.run(
+            user_prompt="Türkiye'nin başkenti neresi?",
+            conversation_history=[
+                {"role": "user", "content": "selam"},
+                {"role": "assistant", "content": "Selam!"},
+            ],
+            observations=[],
+        )
+
+        messages = backend.calls[0][0]
+        self.assertEqual([m["role"] for m in messages],
+                         ["system", "user", "assistant", "user"])
+        self.assertTrue(messages[1]["content"].startswith("selam\n<tool_observations>"))
+        self.assertEqual(messages[2]["content"], "Selam!")
+        # The history must not also be pasted into the request as JSON.
+        self.assertNotIn("CONVERSATION_HISTORY", messages[-1]["content"])
+        self.assertTrue(messages[-1]["content"].startswith("Türkiye'nin başkenti neresi?\n"))
 
     def test_yasama_serializer_matches_documented_layout(self) -> None:
         prompt = serialize_yasama_input(
@@ -195,6 +246,23 @@ class RuntimeBackendTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "invalid model"):
                     LibMercanBackend(path)
             sdk.MercanRuntime.return_value.close.assert_called_once()
+
+    def test_libmercan_cuts_plain_text_chatml_end_marker(self) -> None:
+        sdk = ModuleType("ethosoftlib.mercan")
+        sdk.MercanRuntime = MagicMock()
+        sdk.Model = MagicMock()
+        sdk.Model.NATIVE_GENERATION_API_VERSION = 1
+        sdk.Model.DEVICE_API_VERSION = 1
+        sdk.Model.return_value.generate.return_value = "RESPOND<|im_end|>\n<|im_start|>kullanici"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.mercan"
+            path.touch()
+            with patch.dict("sys.modules", {"ethosoftlib.mercan": sdk}):
+                with LibMercanBackend(path) as backend:
+                    self.assertEqual(
+                        backend.generate([{"role": "user", "content": "Selam"}]),
+                        "RESPOND",
+                    )
 
 
 if __name__ == "__main__":

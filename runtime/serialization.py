@@ -27,6 +27,44 @@ def _history_block(
     )
 
 
+# Observations are re-serialized into every later prompt, so long values are
+# shortened before they reach a model; field names and meaning are kept.
+# Yasama and Yurutme only need to know what ran and how it ended: one read of a
+# medium-sized file was ~7.5k tokens of STATE, twice over (last_observation
+# and recent_observations).  Yargi answers from the content, so it keeps more,
+# but still has to fit a 4k context next to its system prompt and history.
+STATE_OBSERVATION_LIMITS = (60, 3)
+YARGI_OBSERVATION_LIMITS = (1500, 10)
+
+
+def summarize_value(value: Any, limits: tuple[int, int]) -> Any:
+    """Truncate strings to ``limits[0]`` chars and lists to ``limits[1]`` items."""
+    text_chars, list_items = limits
+    if isinstance(value, str):
+        extra = len(value) - text_chars
+        if extra > 0:
+            return value[:text_chars] + f"… (+{extra} karakter)"
+        return value
+    if isinstance(value, Mapping):
+        return {key: summarize_value(item, limits) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        items = [summarize_value(item, limits) for item in value[:list_items]]
+        extra = len(value) - list_items
+        if extra > 0:
+            items.append(f"… (+{extra} öğe)")
+        return items
+    return value
+
+
+def summarize_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Shorten the observations carried in STATE for Yasama and Yurutme."""
+    summarized = dict(state)
+    for key in ("last_observation", "recent_observations"):
+        if summarized.get(key) is not None:
+            summarized[key] = summarize_value(summarized[key], STATE_OBSERVATION_LIMITS)
+    return summarized
+
+
 def serialize_yasama_input(
     *,
     user_prompt: str,
@@ -42,7 +80,7 @@ def serialize_yasama_input(
     history = _history_block(conversation_history)
     if history is not None:
         parts.append(history)
-    parts.append("STATE:\n" + _json(dict(state)))
+    parts.append("STATE:\n" + _json(summarize_state(state)))
     return "\n".join(parts)
 
 
@@ -66,7 +104,7 @@ def serialize_yurutme_input(
         parts.append(history)
     parts.extend(
         [
-            "STATE:\n" + _json(dict(state)),
+            "STATE:\n" + _json(summarize_state(state)),
             f"ACTION:\n{action}",
             "TOOL_SCHEMA:\n" + _json(dict(tool_schema)),
             "PLACEHOLDER:\n"
@@ -93,7 +131,10 @@ def serialize_yargi_input(
         parts.append(history)
     parts.append(
         "<tool_observations>\n"
-        + _json([dict(observation) for observation in observations])
+        + _json(summarize_value(
+            [dict(observation) for observation in observations],
+            YARGI_OBSERVATION_LIMITS,
+        ))
         + "\n</tool_observations>"
     )
     return "\n".join(parts)

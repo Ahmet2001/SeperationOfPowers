@@ -19,6 +19,8 @@ from runtime.mail_clarification import (
     mentions_mail,
 )
 from runtime import LibMercanBackend, LlamaCppBackend, MercanCliBackend, OllamaBackend
+from runtime.local_tools import BUILTIN_TOOL_REGISTRY
+from runtime.web_tools import WEB_ACTIONS, WebExecutor, searxng_url
 from yasama.yasama import YasamaRuntime
 from yargi.yargi import YargiRuntime
 from yurutme.yurutme import YurutmeRuntime
@@ -54,6 +56,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 BACKEND_NAMES = ("ollama", "llamacpp", "mercan-cli", "libmercan")
 ROLE_NAMES = ("yasama", "yurutme", "yargi")
+# Executors that ship with the CLI and need no --executor hook.
+BUILTIN_EXECUTORS = frozenset({"local_readonly", "web"})
 
 
 def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -236,10 +240,15 @@ def _load_tool_registry(path: str | None) -> dict[str, Any]:
 
 
 def _missing_executor(action: str, arguments: dict[str, Any]) -> Mapping[str, Any]:
-    raise RuntimeError(
-        f"Yasama selected {action}, but no executor is configured. "
-        "Pass --executor module:function and, if needed, --tool-registry registry.json."
-    )
+    # Reported to Yargi as a failed observation, so the turn ends with an
+    # explanation instead of a traceback. Pass --executor module:function to
+    # run side-effecting actions.
+    return {
+        "action": action,
+        "data": {},
+        "status": "error",
+        "error": f"{action} aracı bu kurulumda yapılandırılmamış; çalıştırılamadı.",
+    }
 
 
 def _debug_trace(event: str, payload: Mapping[str, Any]) -> None:
@@ -269,6 +278,17 @@ def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
         if pipeline_cfg.get("executor")
         else _missing_executor
     )
+    web_url = searxng_url(pipeline_cfg)
+    if web_url:
+        executor = WebExecutor(web_url, executor)
+        for action in WEB_ACTIONS:
+            # A user registry entry for a web action keeps its own executor.
+            if action not in tool_registry:
+                schema = {
+                    key: value for key, value in BUILTIN_TOOL_REGISTRY[action].items()
+                    if key != "_executor_required"
+                }
+                tool_registry[action] = {**schema, "_builtin_executor": "web"}
 
     pipeline = AgentPipeline(
         yasama=yasama,
@@ -282,6 +302,20 @@ def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
     # Runtime information is generated from the actual configuration, not
     # invented by the model when asked "which tools/models are you using?".
     has_external_executor = bool(pipeline_cfg.get("executor"))
+
+    def tool_info(schema: Mapping[str, Any]) -> dict[str, Any]:
+        built_in = schema.get("_builtin_executor") in BUILTIN_EXECUTORS
+        info: dict[str, Any] = {
+            "built_in": built_in,
+            "external_executor_needed": not built_in,
+            "external_executor_configured": has_external_executor,
+        }
+        # Descriptions only for tools that can actually run: the full set cost
+        # ~1k tokens of Yargi's 4k context.
+        if built_in or has_external_executor:
+            info["description"] = schema.get("description", "")
+        return info
+
     yargi.set_runtime_info({
         "roles": {
             role: {
@@ -291,14 +325,7 @@ def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
             for role in ROLE_NAMES
         },
         "tools": {
-            action: {
-                "description": schema.get("description", ""),
-                "built_in": schema.get("_builtin_executor") == "local_readonly",
-                "external_executor_needed": (
-                    schema.get("_builtin_executor") != "local_readonly"
-                ),
-                "external_executor_configured": has_external_executor,
-            }
+            action: tool_info(schema)
             for action, schema in pipeline.tool_registry.items()
         },
     })
