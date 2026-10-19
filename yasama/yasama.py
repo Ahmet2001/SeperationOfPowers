@@ -66,7 +66,7 @@ Niyet eşleme örnekleri:
 "ACTION:" etiketi, JSON, markdown veya açıklama yazma. Yalnız action adını yaz.
 """
 
-_CONTROL_ACTION_DESCRIPTIONS = {
+CONTROL_ACTION_DESCRIPTIONS = {
     "RESPOND": "Araç gerekmeden doğrudan cevap verilecek sohbet veya bilgi soruları.",
     "ASK_CLARIFICATION": (
         "İstenen araç için zorunlu bilgi (örneğin mail alıcısı) eksikse "
@@ -74,19 +74,19 @@ _CONTROL_ACTION_DESCRIPTIONS = {
     ),
     "FINISH": "Mevcut turda gerekli araç çalıştı ve sonucu STATE.recent_observations içinde.",
 }
-_ACTION_ORDER = (
+ACTION_ORDER = (
     "RESPOND", "WEB_SEARCH", "WEB_OPEN", "FILE_READ", "FILE_SEARCH", "FILE_LIST",
     "CALCULATE", "FILE_CREATE", "FILE_EDIT", "FILE_DELETE", "FILE_MOVE", "CODE_EXECUTE",
     "SHELL_EXECUTE", "DOWNLOAD", "SEND_MAIL", "ASK_CLARIFICATION", "FINISH",
 )
-assert frozenset(_ACTION_ORDER) == CANONICAL_ACTIONS
+assert frozenset(ACTION_ORDER) == CANONICAL_ACTIONS
 
 
 def _action_descriptions() -> str:
     """Describe actions from the same registry Yurutme receives schemas from."""
     lines = ["Action'lar ve ne zaman seçilecekleri:"]
-    for action in _ACTION_ORDER:
-        description = _CONTROL_ACTION_DESCRIPTIONS.get(action)
+    for action in ACTION_ORDER:
+        description = CONTROL_ACTION_DESCRIPTIONS.get(action)
         if description is None:
             description = BUILTIN_TOOL_REGISTRY[action]["description"]
         lines.append(f"- {action}: {description}")
@@ -94,7 +94,7 @@ def _action_descriptions() -> str:
 
 
 YASAMA_SYSTEM_PROMPT = _YASAMA_PROMPT_TEMPLATE.replace(
-    "{action_names}", ", ".join(_ACTION_ORDER)
+    "{action_names}", ", ".join(ACTION_ORDER)
 ).replace("{action_descriptions}", _action_descriptions())
 
 _EMPTY_STATE: dict[str, Any] = {

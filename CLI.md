@@ -305,7 +305,8 @@ If Yasama selects a tool action while no executor is configured, the action is n
 
 Four actions need no executor and always run in-process: `FILE_LIST`, `FILE_READ`
 and `FILE_SEARCH` (read-only, inside the working directory) and `CALCULATE`
-(`{operation, a, b}` with add, subtract, multiply, divide, power or sqrt). A
+(`{expression}`, e.g. `"(300-87)/3"` or `"sqrt(625)"`, evaluated by
+`ethosoftlib.math` without `eval`; needs the `mercan` extra). A
 file up to 7000 characters is read whole; a longer file or a PDF is searched
 with `ethosoftlib.rag` and only the sections that match the question (Yurutme's
 `query` plus the user's request) are returned, each marked with its line.

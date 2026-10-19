@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-mercan = ["ethosoftlib>=0.7.0"]
+mercan = ["ethosoftlib[math]>=0.8.0"]
 speech = ["ema-lightning", "sounddevice>=0.5"]
 
 [project.scripts]
@@ -22,3 +22,6 @@ py-modules = ["cli", "cli_entry", "main"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["runtime*", "yasama*", "yurutme*", "yargi*"]
+
+[tool.setuptools.package-data]
+runtime = ["tool_registry.json"]

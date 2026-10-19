@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import math
 import re
+from fractions import Fraction
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
-from ethosoftlib.rag import Hit, Index, tokenize
+# ethosoftlib (rag; math needs sympy) is imported where it is used: the
+# pipeline itself has no dependencies, and only long FILE_READs and CALCULATE
+# need the library (install the "mercan" extra).
 
 
 # Only skip generated dependency/cache trees on broad workspace searches.
@@ -30,20 +34,22 @@ SEARCH_IGNORED_DIRS = frozenset({
 # small observation.
 READ_CHAR_BUDGET = 7000
 
-CALCULATE_OPERATIONS = ("add", "subtract", "multiply", "divide", "power", "sqrt")
-# Keeps a**b from running away on integers (9 ** 10 ** 9).
-MAX_POWER_EXPONENT = 1000
 # Integers from here on are reported in scientific notation: a 200-digit
 # result was copied digit by digit into the answer.
 MAX_EXACT_INTEGER = 10**21
 
-# Request words that say what to do with the file, not what is in it, as
-# ethosoftlib.rag search terms (five-letter prefixes). With them a question
-# like "X.md dosyasında ... ne diyor?" ranked the file's title chunk first.
-_REQUEST_TERMS = frozenset(tokenize(
-    "dosya dosyası dosyasında dosyasını oku okuyup göster anlat açıkla söyle "
-    "özetle diyor yazıyor nedir neler hangi göre içinde içeriği bul"
-))
+
+@lru_cache(maxsize=1)
+def _request_terms() -> frozenset[str]:
+    """Request words that say what to do with the file, not what is in it, as
+    ethosoftlib.rag search terms (five-letter prefixes). With them a question
+    like "X.md dosyasında ... ne diyor?" ranked the file's title chunk first."""
+    from ethosoftlib.rag import tokenize
+
+    return frozenset(tokenize(
+        "dosya dosyası dosyasında dosyasını oku okuyup göster anlat açıkla söyle "
+        "özetle diyor yazıyor nedir neler hangi göre içinde içeriği bul"
+    ))
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -134,27 +140,25 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "_builtin_executor": "local_readonly",
     },
-    # Schema of the training data's calculator family (operation/a/b, result
-    # observation); sqrt and power extend its four operations.
+    # Schema of the training data's largest calculator source (tool-math
+    # `calc {expression}`); its operation/a/b rows convert to expressions
+    # without loss (PROJECT_MASTER §6).
     "CALCULATE": {
         "description": (
-            "İki sayı üzerinde aritmetik işlem yapar (toplama, çıkarma, çarpma, bölme, üs) "
-            "veya bir sayının karekökünü alır ve sonucu döndürür. Sayıları kullanıcının "
-            "isteğinden al; yazıyla yazılmış sayıları rakama çevir."
+            "Bir matematik ifadesini hesaplar ve sonucu döndürür: toplama, çıkarma, "
+            "çarpma, bölme, üs alma, karekök. Sayıları kullanıcının isteğinden al; "
+            "yazıyla yazılmış sayıları rakama çevir."
         ),
         "parameters": _schema({
-            "operation": {
+            "expression": {
                 "type": "string",
-                "enum": list(CALCULATE_OPERATIONS),
                 "description": (
-                    "add: a + b, subtract: a - b, multiply: a × b, divide: a ÷ b, "
-                    "power: a üssü b, sqrt: a'nın karekökü."
+                    "Rakamlar, + - * / ^ ve parantezlerle yazılmış ifade; karekök için "
+                    "sqrt(). Örnek: '45.5*12', '(300-87)/3', 'sqrt(625)', '2^16'."
                 ),
             },
-            "a": {"type": "number", "description": "İlk sayı."},
-            "b": {"type": "number", "description": "İkinci sayı; sqrt için gerekmez."},
-        }, ["operation", "a"]),
-        "placeholder": {"operation": None, "a": None, "b": None},
+        }, ["expression"]),
+        "placeholder": {"expression": None},
         "_builtin_executor": "local_readonly",
     },
     "FILE_CREATE": {
@@ -305,14 +309,17 @@ def _retrieval_query(query: str, user_prompt: str, relative: str) -> str:
     # Only the written path goes: "kurulumu" stays in a question about kurulum.md.
     for name in sorted({relative, Path(relative).name}, key=len, reverse=True):
         text = re.sub(re.escape(name), " ", text, flags=re.IGNORECASE)
+    from ethosoftlib.rag import tokenize
+
     terms: list[str] = []
+    request_terms = _request_terms()
     for term in tokenize(text):
-        if term not in _REQUEST_TERMS and term not in terms:
+        if term not in request_terms and term not in terms:
             terms.append(term)
     return " ".join(terms)
 
 
-def _read_file(path: Path, relative: str, query: str) -> dict[str, Any]:
+def _read_file(path: Path, relative: str, query: str, user_prompt: str) -> dict[str, Any]:
     action = "FILE_READ"
     sections = _file_sections(path)
     total_chars = sum(len(text) for text, _ in sections)
@@ -322,6 +329,9 @@ def _read_file(path: Path, relative: str, query: str) -> dict[str, Any]:
             "content": "\n\n".join(text for text, _ in sections),
         })
 
+    from ethosoftlib.rag import Hit, Index
+
+    query = _retrieval_query(query, user_prompt, relative)
     index = Index()
     for text, metadata in sections:
         index.add(text, relative, metadata=metadata)
@@ -358,59 +368,55 @@ def _read_file(path: Path, relative: str, query: str) -> dict[str, Any]:
     })
 
 
-def _number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
 def _calculate(arguments: Mapping[str, Any]) -> dict[str, Any]:
     action = "CALCULATE"
-    operation, a, b = arguments.get("operation"), arguments.get("a"), arguments.get("b")
-    if operation not in CALCULATE_OPERATIONS:
-        return _observation(action, error=(
-            f"Bilinmeyen işlem: {operation!r}. Geçerli işlemler: "
-            + ", ".join(CALCULATE_OPERATIONS) + "."
-        ))
-    if not _number(a) or (operation != "sqrt" and not _number(b)):
-        return _observation(action, error=f"{operation} için a ve b sayı olmalıdır.")
+    expression = str(arguments.get("expression") or "").strip()
+    if not expression:
+        return _observation(action, error="Hesaplanacak ifade boş.")
     try:
-        if operation == "add":
-            result = a + b
-        elif operation == "subtract":
-            result = a - b
-        elif operation == "multiply":
-            result = a * b
-        elif operation == "divide":
-            if b == 0:
-                return _observation(action, error="Sıfıra bölme tanımsızdır.")
-            result = a / b
-        elif operation == "power":
-            if abs(b) > MAX_POWER_EXPONENT:
-                return _observation(action, error=f"Üs en fazla {MAX_POWER_EXPONENT} olabilir.")
-            if a == 0 and b < 0:
-                return _observation(action, error="Sıfırın negatif kuvveti tanımsızdır.")
-            result = a ** b
-        else:
-            if a < 0:
-                return _observation(action, error="Negatif sayının gerçel karekökü yoktur.")
-            result = math.sqrt(a)
+        from ethosoftlib.math import evaluate
+        from ethosoftlib.math.protocol import ToolError
+    except ImportError as exc:
+        return _observation(action, error=(
+            "CALCULATE için ethosoftlib[math] (sympy) kurulu olmalıdır: " + str(exc)
+        ))
+    # evaluate() parses the expression itself (no eval); exact results come
+    # back as Fraction, irrational ones (sqrt(2)) as sympy numbers.
+    try:
+        value = evaluate(expression)
+    except ToolError as exc:
+        return _observation(action, error=f"İfade hesaplanamadı: {exc}")
+    if isinstance(value, bool):
+        return _observation(action, data={"result": value})
+    try:
+        result = _plain_number(value)
     except OverflowError:
         return _observation(action, error="Sonuç çok büyük; hesaplanamadı.")
-    if isinstance(result, complex):
-        return _observation(action, error="Sonuç gerçel bir sayı değil.")
-    if isinstance(result, int) and abs(result) >= MAX_EXACT_INTEGER:
-        try:
-            result = float(result)
-        except OverflowError:
-            return _observation(action, error="Sonuç çok büyük; hesaplanamadı.")
-    if isinstance(result, float):
-        if not math.isfinite(result):
-            return _observation(action, error="Sonuç çok büyük; hesaplanamadı.")
-        # 12 significant digits hide binary noise (0.1 + 0.2) without
-        # changing any result a person would write down.
-        result = float(f"{result:.12g}")
-        if result.is_integer() and abs(result) < 1e15:
-            result = int(result)
+    except (TypeError, ValueError):
+        return _observation(action, error=(
+            f"İfade bir sayıya hesaplanamadı: {value}. Bilinmeyen içermeyen bir ifade yaz."
+        ))
     return _observation(action, data={"result": result})
+
+
+def _plain_number(value: Any) -> int | float:
+    """JSON number for an evaluate() result: integers exact up to
+    MAX_EXACT_INTEGER, everything else 12 significant digits, which hides
+    binary noise (0.1 + 0.2) without changing a result a person writes down."""
+    if isinstance(value, Fraction):
+        if value.denominator == 1 and abs(value.numerator) < MAX_EXACT_INTEGER:
+            return value.numerator
+        number = float(value)
+    else:
+        if getattr(value, "free_symbols", None) or not getattr(value, "is_real", False):
+            raise ValueError(value)
+        number = float(value.evalf(17))
+    if not math.isfinite(number):
+        raise OverflowError(value)
+    number = float(f"{number:.12g}")
+    if number.is_integer() and abs(number) < MAX_EXACT_INTEGER:
+        return int(number)
+    return number
 
 
 def _resolve_workspace_path(raw_path: Any, workspace: Path) -> Path:
@@ -467,10 +473,9 @@ def execute_builtin_local(
             if not path.is_file():
                 return _observation(action, error=f"File not found: {path}")
             relative = str(path.relative_to(root))
-            query = _retrieval_query(
-                str(arguments.get("query") or ""), user_prompt or "", relative
+            return _read_file(
+                path, relative, str(arguments.get("query") or ""), user_prompt or ""
             )
-            return _read_file(path, relative, query)
 
         if action == "CALCULATE":
             return _calculate(arguments)

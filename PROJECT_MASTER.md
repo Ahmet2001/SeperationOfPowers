@@ -2,7 +2,7 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.4  
+**Sürüm:** 0.5  
 **Tarih:** 2026-10-19  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
@@ -106,7 +106,8 @@ edit_file       → FILE_EDIT
 list_directory  → FILE_LIST
 search_code     → FILE_SEARCH
 run_command     → SHELL_EXECUTE
-calculator      → CALCULATE      (yalnız operation/a/b şemalı kayıtlar — §6)
+calc            → CALCULATE      (expression aynen)
+calculator      → CALCULATE      (operation/a/b → expression — §6)
 ```
 
 Örnek zorlanmaması gerekenler:
@@ -161,16 +162,29 @@ target = json.dumps(row["target_arguments"], ensure_ascii=False)
 
 Placeholder yaklaşımında model yeni key icat etmemeli, verilen schema/placeholder ile uyumlu alanları doldurmalıdır.
 
-### Geçerli tool şemaları (v0.4)
+### Geçerli tool şemaları (v0.5)
 
-Fiziksel registry şeması §14'te açık karar olarak duruyor; o karara kadar geçerli şemalar runtime registry'sidir (`runtime/local_tools.py` → `BUILTIN_TOOL_REGISTRY`). Dataset normalizasyonu bu alan adlarına göre yapılır. Zorunlu alanlar **kalın**.
+Tek kaynak koddur: `runtime/local_tools.py` → `BUILTIN_TOOL_REGISTRY` ve Yasama'nın action sırası (`yasama/yasama.py` → `ACTION_ORDER`, `CONTROL_ACTION_DESCRIPTIONS`). Fiziksel registry bu koddan üretilen **`runtime/tool_registry.json`** dosyasıdır; veri hatları ve belgeler bu dosyayı okur, elle düzenlenmez (`python -m runtime.registry_export`; `--check` eskimişse 1 döner, testler de kontrol eder).
+
+```text
+{
+  "format": 1,
+  "contract": "<bu dosyanın sürümü>",
+  "actions": [17 action, Yasama prompt sırası],
+  "control_actions": {RESPOND | ASK_CLARIFICATION | FINISH: açıklama},
+  "tools": {ACTION: {description, parameters (JSON Schema object), placeholder,
+                     executor: "local" | "web" | "external"}}
+}
+```
+
+`executor`: `local` her kurulumda süreç içinde çalışır; `web` SearXNG adresi verilince yerleşiktir; `external` için `--executor` gerekir. Dataset normalizasyonu bu alan adlarına göre yapılır. Zorunlu alanlar **kalın**.
 
 | Action | Argümanlar | Not |
 |---|---|---|
 | FILE_LIST | `path`, `pattern`, `recursive` | `pattern` istekten çıkarılan glob'dur (`*.py`); filtre istenmediyse `*` |
 | FILE_READ | **`path`**, `query` | Uzun dosya/PDF'te aranacak konu; boşsa kullanıcının isteği (§3.1) |
 | FILE_SEARCH | **`query`**, `path`, `pattern`, `recursive`, `max_results` | Aranan metin `query`'dir; `pattern` dosya filtresidir |
-| CALCULATE | **`operation`**, **`a`**, `b` | `operation` ∈ add, subtract, multiply, divide, power, sqrt; `b` sqrt dışında gerekli; sayılar JSON number (§6) |
+| CALCULATE | **`expression`** | Rakam, `+ - * / ^`, parantez ve `sqrt()`; yazıyla yazılmış sayı rakama çevrilir (§6) |
 | FILE_CREATE | **`path`**, **`content`** | |
 | FILE_EDIT | **`path`**, **`old_text`**, **`new_text`** | |
 | FILE_DELETE | **`path`** | |
@@ -293,7 +307,7 @@ WEB_OPEN     → {url, title, text, truncated}
 
 Uzun FILE_READ (RAG): dosya `ethosoftlib.rag.Index` (BM25, Türkçe 5 harf kök) ile ~120 kelimelik parçalara bölünür; sorguyla en ilgili parçalar toplam 7000 karakteri geçmeyecek kadar seçilir ve dosyadaki sırayla `content` içinde verilir. Her parçanın başında `[satır N]` (PDF'te `[sayfa P, satır N]`) bulunur. Sorgu, Yürütme'nin `query`'si + kullanıcının isteğidir; okunan dosyanın yazılı adı ve istek kelimeleri (oku, dosya, ne diyor...) çıkarılır. Hiçbir terim eşleşmezse dosyanın başı verilir ve `matched: false` olur. Bölümler ayrı obje listesi değil tek `content` metnidir: training verisindeki FILE_READ observation'ları `{path, content}` biçimindedir ve liste verildiğinde Yargı onu JSON olarak geri döktü. 7000 karakter ölçümle seçildi: serialize edilmiş observation 2.1–2.7 karakter/token, yani ≤ ~3.4k token; Yargı (~2.4k prompt + 768 cevap) ve Yürütme (~2.9k + 512) 8192'ye ikinci küçük bir observation ile sığar.
 
-CALCULATE sonucu Python aritmetiğidir (training verisindeki calculator sonuçlarıyla aynı yöntem); float'lar 12 anlamlı basamağa yuvarlanır (0.1 + 0.2 → 0.3), tam sayıya eşit float int yazılır, 10^21'den büyük tam sayılar bilimsel gösterime geçer. Sıfıra bölme, negatif karekök, |üs| > 1000, bilinmeyen işlem hata observation'ıdır.
+CALCULATE ifadeyi `ethosoftlib.math.evaluate` ile hesaplar: kendi ayrıştırıcısıdır, Python `eval` kullanmaz (`import os`, `__import__` reddedilir). Kesin sonuç (kesir) sayıya çevrilir: tam sayılar 10^21'e kadar tam, diğerleri 12 anlamlı basamak (0.1 + 0.2 → 0.3, 340/80 → 4.25); 10^21 ve üstü bilimsel gösterim. Sıfıra bölme, çok büyük üs, bilinmeyen içeren ifade (`x+1`) ve anlaşılamayan ifade hata observation'ıdır. `ethosoftlib[math]` (sympy) kurulu değilse CALCULATE hata observation'ı döner; pipeline'ın kendisi bağımlılıksızdır.
 
 Hata durumunda `data` boş obje, `status: "error"`, `error` insan okunur hata metnidir. Executor'ı yapılandırılmamış bir action seçilirse runtime çökmez; `"<ACTION> aracı bu kurulumda yapılandırılmamış; çalıştırılamadı."` hata observation'ı üretir ve Yargı bunu kullanıcıya anlatır.
 
@@ -480,20 +494,37 @@ Runtime aynı sınırı uygular: WEB_SEARCH en fazla 3 sonuç döndürür (`max_
 
 ## Calculator
 
-Runtime tool'u: **CALCULATE** `{operation, a, b}` → observation `{result}` (§2.2, §3.1). Şema `arac_kullanimi` calculator verisinin şemasıdır; yalnız action adı canonical biçime çevrilir:
+Runtime tool'u: **CALCULATE** `{expression}` → observation `{result}` (§2.2, §3.1).
+
+Veri gerçeği (`arac_kullanimi` clean_yyy_v2 tam tarama, 2026-10-19; Yürütme 136,169 · Yasama 222,934 · Yargı 86,765 calculator satırı):
+
+| Kaynak | Source action | Yürütme satırı | Argümanlar | Observation |
+|---|---|---|---|---|
+| `tool-math` | `calc` | 84,908 (%62) | `{expression}` örn. `"15*0.6"` | `{result}` |
+| `harsh8001-calc` + `yuyijiong-calc` | `calculator` | 39,636 (%29) | `{operation: add/subtract/multiply/divide, a, b}` | `{result}` |
+| `glaive-v2-calc` | `calculate_*` (~175 ad) | 11,625 (%9) | alan formülleri (`bill_amount`, `tip_percentage`, ...) | alan adlı (`tip_amount`, `bmi`, ...) |
+
+Eşleme:
 
 ```text
-calculator {operation: add|subtract|multiply|divide, a, b}  →  CALCULATE (aynı argümanlar)
-observation {"result": ...}                                 →  aynen
+calc {expression}               → CALCULATE {expression}        (aynen)
+calculator {add, a, b}          → CALCULATE {"a+b"}              subtract → "a-b", multiply → "a*b", divide → "a/b"
+                                  negatif sayı parantezlenir: a=5, b=-3, subtract → "5-(-3)"
+observation {result}            → aynen
 ```
 
-`power` ve `sqrt` runtime genişletmesidir; veride karşılıkları yoktur, sentetik veriyle öğretilir.
+Eşlemeden sonra her satır doğrulanır: ifade runtime CALCULATE ile yeniden hesaplanır ve kaynaktaki `result` ile (12 anlamlı basamakta) aynı olmalıdır; tutmayan satır atılır.
 
-Veri gerçeği (örnekleme, 2026-10-19):
+`tool-math` çok adımlıdır (aynı soruda 7+ hesaba kadar zincir; Yürütme step_index 0: 84,554, 1: 25,436, 2: 13,342 ...). Yasama tarafında her zincir FINISH ile biter: **86,765 `finish_after_tool` satırı** FINISH vs CONTINUE için en büyük kaynaktır.
 
-- `harsh8001-calc` ve `yuyijiong-calc`: tek `calculator` tool'u, yukarıdaki şema. Yasama görünümünde her çağrıyı `finish_after_tool` ile **FINISH** izler → "araçtan sonra bitir" için en büyük kaynak.
-- `glaive-v2-calc`: `calculate_tip`, `calculate_bmi`, `calculate_loan_payment`, `calculate_median`... gibi kendi şemalı alan araçları (~60 farklı ad). CALCULATE'e otomatik map edilmez (§2.1); akıbeti §14'te.
-- Gürültü: Yürütme argümanında operand bozulması görüldü (`2247918 + 867` → `a: 22479418`) ve Yargı cevabında sayı bozulması (`1.1833976833976836` → `1.183397668339766836`). Eğitime girmeden filtrelenir: rakamla yazılmış istekte `a`/`b` istekte birebir geçmeli; Yargı cevabı observation'daki sonucu (veya doğru yuvarlanmışını) içermeli.
+**glaive `calculate_*` kararı:** canonical eğitime alınmaz (`unmapped_preserved` kalır). ~175 ayrı alan aracını runtime'a eklemek ontology'yi şişirir; argümanlardan ifade kurmak (BMI = kilo / boy², kredi taksiti...) formül varsayımı gerektirir ve observation'ı doğrulanamayan satır üretir. Gerekirse ileride yalnız formülü tartışmasız olanlar (`calculate_tip`, `calculate_discount`, `calculate_average`...) yukarıdaki doğrulamadan geçerek CALCULATE'e çevrilebilir.
+
+Gürültü filtreleri (eğitimden önce):
+
+- Rakamla yazılmış istekte operand istekte birebir geçmeli: `calculator` satırlarında 808 / 19,648 (%4) uyuşmazlık (`2247918 + 867` → `a: 22479418`).
+- Yargı cevabı observation'daki sonucu (veya doğru yuvarlanmışını) içermeli; bozulmuş sayılar (`1.1833976833976836` → `1.183397668339766836`) atılır.
+- `tool-math` Yargı cevaplarındaki `boxed9` gibi LaTeX artıkları temizlenir veya satır atılır.
+- `tool-math` ifadeleri bazen ara akıl yürütme varsayar (30 kutu, "1 alana 1 bedava" → `15*0.6`); Yürütme bu satırlarda sorudan doğrudan çıkmayan sayıları öğrenir. Oranı ölçülmeli; gerekirse sorudaki sayılarla açıklanamayan ifadeler ayrı tutulur.
 
 Calculator observation/result değerleri truncation ile değiştirilmemelidir.
 
@@ -791,7 +822,7 @@ whole-call accuracy
 wrong-value leakage
 negation/correction accuracy
 missing-argument behavior
-CALCULATE: operation accuracy, sayı çıkarma (yazıyla yazılmış ve ondalık virgüllü sayılar)
+CALCULATE: sonuç doğruluğu (ifade runtime'da hesaplanıp beklenen sonuçla karşılaştırılır; ifade metni birebir aranmaz), yazıyla yazılmış ve ondalık virgüllü sayılar
 ```
 
 ## Yargı
@@ -843,8 +874,7 @@ Aşağıdaki konular henüz bu dosyada kesinleştirilmemiştir ve adım adım ka
 - checkpoint naming convention
 - evaluator script contract'ları
 - runtime service/process topolojisi
-- tool registry'nin canonical fiziksel şeması
-- glaive `calculate_*` alan araçları (BMI, kredi, bahşiş...): ayrı tool / sentetik CALCULATE'e çevirme / dışarıda bırakma
+- `tool-math` ifadelerinde sorudan çıkmayan ara sonuç oranı ve bu satırların kullanımı (§6)
 ```
 
 Bu konularda karar verilene kadar mevcut davranış "resmi standart" gibi varsayılmamalıdır.
@@ -892,6 +922,14 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.5 — 2026-10-19
+
+- §2.2, §3.1, §6: CALCULATE şeması `{expression}` oldu (verinin %62'si `tool-math` `calc {expression}`); `calculator {operation, a, b}` satırları kayıpsız ifadeye çevrilir. Hesap `ethosoftlib.math.evaluate` ile (eval yok).
+- §2.2: Fiziksel tool registry `runtime/tool_registry.json` (format 1); koddan üretilir, test eskimesini yakalar. §14'teki açık karar kapandı.
+- §6: Calculator verisinin tam profili, eşleme ve doğrulama kuralı, gürültü filtreleri. glaive `calculate_*` canonical eğitime alınmaz.
+- §12: CALCULATE için sonuç doğruluğu ölçütü.
+- Ölçüm notu (genel 0.8B Yürütme, few-shot ile, aynı sorular): `{operation, a, b}` şeması 3/8; `{expression}` şeması ilk 8 soruda 6/8, 10 soruda 7/10 (doğru işlem seçimi, yazıyla yazılmış ondalıklar ve `240*(1-0.15)` gibi bileşik ifadeler doğru). Kalan hatalar: karekökte yalnız `625`, çarpma yerine bölme, çok adımlı soruda yalnız ilk adım.
 
 ## 0.4 — 2026-10-19
 

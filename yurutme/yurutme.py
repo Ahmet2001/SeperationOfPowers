@@ -54,20 +54,20 @@ YURUTME_FEW_SHOT_EXAMPLES: dict[str, tuple[tuple[str, dict[str, Any]], ...]] = {
             {"path": "kurulum.md", "query": "Docker kurulumu"},
         ),
     ),
-    # Three operations so no single one is copied; numbers written in words
-    # or with a decimal comma are turned into JSON numbers, as in the data.
+    # Three different shapes so no single operator is copied; a decimal comma
+    # and numbers written in words become plain digits, as in the data.
     "CALCULATE": (
         (
             "Bir koşucu 42,195 km'yi 3,5 saatte koştu. Saatteki ortalama hızı nedir?",
-            {"operation": "divide", "a": 42.195, "b": 3.5},
+            {"expression": "42.195/3.5"},
         ),
         (
-            "Cüzdanımda 75 lira vardı, 18 lira harcadım. Kaç lira kaldı?",
-            {"operation": "subtract", "a": 75, "b": 18},
+            "3 defter 12,50 TL'den, 2 kalem 4 TL'den alırsam toplam kaç TL öderim?",
+            {"expression": "3*12.5+2*4"},
         ),
         (
             "Yüz kırk dördün karekökü kaç?",
-            {"operation": "sqrt", "a": 144},
+            {"expression": "sqrt(144)"},
         ),
     ),
     "FILE_SEARCH": ((

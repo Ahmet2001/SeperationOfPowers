@@ -1,0 +1,408 @@
+{
+  "format": 1,
+  "contract": "0.5",
+  "actions": [
+    "RESPOND",
+    "WEB_SEARCH",
+    "WEB_OPEN",
+    "FILE_READ",
+    "FILE_SEARCH",
+    "FILE_LIST",
+    "CALCULATE",
+    "FILE_CREATE",
+    "FILE_EDIT",
+    "FILE_DELETE",
+    "FILE_MOVE",
+    "CODE_EXECUTE",
+    "SHELL_EXECUTE",
+    "DOWNLOAD",
+    "SEND_MAIL",
+    "ASK_CLARIFICATION",
+    "FINISH"
+  ],
+  "control_actions": {
+    "RESPOND": "Araç gerekmeden doğrudan cevap verilecek sohbet veya bilgi soruları.",
+    "ASK_CLARIFICATION": "İstenen araç için zorunlu bilgi (örneğin mail alıcısı) eksikse kullanıcıya soru sorulur.",
+    "FINISH": "Mevcut turda gerekli araç çalıştı ve sonucu STATE.recent_observations içinde."
+  },
+  "tools": {
+    "WEB_SEARCH": {
+      "description": "İnternette arama yapar ve sonuç başlıkları ile bağlantıları döndürür. Adresi belli tek bir sayfayı açmak için WEB_OPEN kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Arama sorgusu."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "En fazla sonuç sayısı.",
+            "default": 3
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "query"
+        ]
+      },
+      "placeholder": {
+        "query": null,
+        "max_results": 3
+      },
+      "executor": "web"
+    },
+    "WEB_OPEN": {
+      "description": "Adresi verilen tek bir web sayfasını açıp metnini getirir.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Açılacak sayfanın tam adresi."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "url"
+        ]
+      },
+      "placeholder": {
+        "url": null
+      },
+      "executor": "web"
+    },
+    "FILE_READ": {
+      "description": "Adı bilinen tek bir dosyayı (metin veya PDF) okur. Kısa dosyanın tamamını, uzun dosyanın soruyla en ilgili bölümlerini satır numaralarıyla getirir. Hangi dosyada olduğu bilinmeyen bir metni aramak için FILE_SEARCH kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Okunacak dosyanın yolu."
+          },
+          "query": {
+            "type": "string",
+            "description": "Uzun dosyada aranacak konu. Boş bırakılırsa kullanıcının isteği kullanılır."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "path"
+        ]
+      },
+      "placeholder": {
+        "path": null
+      },
+      "executor": "local"
+    },
+    "FILE_SEARCH": {
+      "description": "Dosyaların içinde bir kelime veya metin arar ve geçtiği dosya ile satırları döndürür. Dosya adı bilinip içeriği isteniyorsa FILE_READ kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Aranacak kelime veya metin."
+          },
+          "path": {
+            "type": "string",
+            "description": "Aramanın yapılacağı klasör.",
+            "default": "."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Aranacak dosyaları sınırlayan glob deseni.",
+            "default": "*"
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Alt klasörlerde de aransın mı?",
+            "default": true
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "En fazla sonuç sayısı.",
+            "default": 50
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "query"
+        ]
+      },
+      "placeholder": {
+        "query": null,
+        "path": ".",
+        "pattern": "*",
+        "recursive": true,
+        "max_results": 50
+      },
+      "executor": "local"
+    },
+    "FILE_LIST": {
+      "description": "Bir klasördeki dosya ve klasörlerin adlarını listeler; içeriklerini okumaz. Dosya türü istenmişse deseni istekten çıkar: Python dosyaları için '*.py', JSON dosyaları için '*.json'. Filtre istenmediyse '*' kullan.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Listelenecek klasör.",
+            "default": "."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "İstekten çıkarılan glob deseni, örneğin '*.py'.",
+            "default": "*"
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Alt klasörler de listelensin mi?",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "placeholder": {
+        "path": ".",
+        "pattern": null,
+        "recursive": false
+      },
+      "executor": "local"
+    },
+    "CALCULATE": {
+      "description": "Bir matematik ifadesini hesaplar ve sonucu döndürür: toplama, çıkarma, çarpma, bölme, üs alma, karekök. Sayıları kullanıcının isteğinden al; yazıyla yazılmış sayıları rakama çevir.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Rakamlar, + - * / ^ ve parantezlerle yazılmış ifade; karekök için sqrt(). Örnek: '45.5*12', '(300-87)/3', 'sqrt(625)', '2^16'."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "expression"
+        ]
+      },
+      "placeholder": {
+        "expression": null
+      },
+      "executor": "local"
+    },
+    "FILE_CREATE": {
+      "description": "Yeni bir dosya oluşturur ve içine verilen içeriği yazar. Var olan bir dosyanın bir kısmını değiştirmek için FILE_EDIT kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Oluşturulacak dosyanın yolu."
+          },
+          "content": {
+            "type": "string",
+            "description": "Dosyaya yazılacak içerik."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "content"
+        ]
+      },
+      "placeholder": {
+        "path": null,
+        "content": null
+      },
+      "executor": "external"
+    },
+    "FILE_EDIT": {
+      "description": "Var olan bir dosyada belirli bir metni yenisiyle değiştirir. Yeni dosya oluşturmak için FILE_CREATE kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Düzenlenecek dosyanın yolu."
+          },
+          "old_text": {
+            "type": "string",
+            "description": "Dosyada değiştirilecek mevcut metin."
+          },
+          "new_text": {
+            "type": "string",
+            "description": "Yerine yazılacak yeni metin."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "old_text",
+          "new_text"
+        ]
+      },
+      "placeholder": {
+        "path": null,
+        "old_text": null,
+        "new_text": null
+      },
+      "executor": "external"
+    },
+    "FILE_DELETE": {
+      "description": "Bir dosyayı siler. Geri alınamaz; yalnızca kullanıcı açıkça silmeyi istediğinde kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Silinecek dosyanın yolu."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "path"
+        ]
+      },
+      "placeholder": {
+        "path": null
+      },
+      "executor": "external"
+    },
+    "FILE_MOVE": {
+      "description": "Bir dosyayı başka bir klasöre taşır veya adını değiştirir.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Taşınacak dosyanın mevcut yolu."
+          },
+          "destination": {
+            "type": "string",
+            "description": "Dosyanın yeni yolu veya hedef klasör."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "destination"
+        ]
+      },
+      "placeholder": {
+        "source": null,
+        "destination": null
+      },
+      "executor": "external"
+    },
+    "CODE_EXECUTE": {
+      "description": "Verilen kod parçasını çalıştırır ve çıktısını döndürür. Terminal komutları için SHELL_EXECUTE kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string",
+            "description": "Programlama dili, örneğin python."
+          },
+          "code": {
+            "type": "string",
+            "description": "Çalıştırılacak kod."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "language",
+          "code"
+        ]
+      },
+      "placeholder": {
+        "language": "python",
+        "code": null
+      },
+      "executor": "external"
+    },
+    "SHELL_EXECUTE": {
+      "description": "Kullanıcının istediği terminal komutunu çalıştırır. Python kodu çalıştırmak için CODE_EXECUTE kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Kullanıcının istediği komutun tam hali."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Komutun çalışacağı klasör.",
+            "default": "."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "command"
+        ]
+      },
+      "placeholder": {
+        "command": null,
+        "cwd": "."
+      },
+      "executor": "external"
+    },
+    "DOWNLOAD": {
+      "description": "Bir adresteki dosyayı indirip diske kaydeder. Sayfanın metnini okumak için WEB_OPEN kullanılır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "İndirilecek dosyanın adresi."
+          },
+          "path": {
+            "type": "string",
+            "description": "Dosyanın kaydedileceği klasör veya yol.",
+            "default": "."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "url"
+        ]
+      },
+      "placeholder": {
+        "url": null,
+        "path": "."
+      },
+      "executor": "external"
+    },
+    "SEND_MAIL": {
+      "description": "E-posta gönderir. Alıcı adresi, konu ve içerik kullanıcının isteğinde açıkça bulunmalıdır.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Alıcının e-posta adresi."
+          },
+          "subject": {
+            "type": "string",
+            "description": "E-postanın konusu."
+          },
+          "body": {
+            "type": "string",
+            "description": "Düz metin e-posta içeriği."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ]
+      },
+      "placeholder": {
+        "to": null,
+        "subject": null,
+        "body": null
+      },
+      "executor": "external"
+    }
+  }
+}
