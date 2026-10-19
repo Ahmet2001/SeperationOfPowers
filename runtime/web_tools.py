@@ -20,8 +20,10 @@ WEB_ACTIONS = frozenset({"WEB_SEARCH", "WEB_OPEN"})
 SEARXNG_URL_ENV = "ETHOSOFT_SEARXNG_URL"
 
 # Observations are serialized into every later Yasama step and into Yargi's
-# prompt, so keep them well inside a 4k context.
-MAX_SEARCH_RESULTS = 8
+# prompt, so keep them well inside a 4k context.  Three results match the
+# training data, whose web-search observations keep the source-ranked top 3
+# (PROJECT_MASTER §6).
+MAX_SEARCH_RESULTS = 3
 MAX_PAGE_CHARS = 4000
 
 ExecutorFn = Callable[[str, dict[str, Any]], Mapping[str, Any]]
@@ -55,7 +57,7 @@ class WebExecutor:
         try:
             if action == "WEB_SEARCH":
                 query = str(arguments.get("query") or "")
-                limit = min(int(arguments.get("max_results") or 5), MAX_SEARCH_RESULTS)
+                limit = min(int(arguments.get("max_results") or MAX_SEARCH_RESULTS), MAX_SEARCH_RESULTS)
                 results = self._client.search(query, max_results=limit)
                 return _observation(action, data={
                     "query": query,

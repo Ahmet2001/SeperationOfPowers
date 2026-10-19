@@ -154,9 +154,9 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         ),
         "parameters": _schema({
             "query": {"type": "string", "description": "Arama sorgusu."},
-            "max_results": {"type": "integer", "description": "En fazla sonuç sayısı.", "default": 5},
+            "max_results": {"type": "integer", "description": "En fazla sonuç sayısı.", "default": 3},
         }, ["query"]),
-        "placeholder": {"query": None, "max_results": 5},
+        "placeholder": {"query": None, "max_results": 3},
         "_executor_required": True,
     },
     "WEB_OPEN": {

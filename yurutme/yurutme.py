@@ -60,11 +60,11 @@ YURUTME_FEW_SHOT_EXAMPLES: dict[str, tuple[tuple[str, dict[str, Any]], ...]] = {
     "WEB_SEARCH": (
         (
             "İnternette 2026 Dünya Kupası maç takvimini ara.",
-            {"query": "2026 Dünya Kupası maç takvimi", "max_results": 5},
+            {"query": "2026 Dünya Kupası maç takvimi", "max_results": 3},
         ),
         (
             "Webde Rust ile Python performans karşılaştırması bul.",
-            {"query": "Rust Python performans karşılaştırması", "max_results": 5},
+            {"query": "Rust Python performans karşılaştırması", "max_results": 3},
         ),
     ),
     "SHELL_EXECUTE": ((
