@@ -9,7 +9,7 @@ from typing import Any
 from runtime.backends import ChatBackend, GenerationConfig
 from runtime.local_tools import BUILTIN_TOOL_REGISTRY
 from runtime.output_parsing import parse_json_object
-from runtime.tool_validation import validate_tool_arguments
+from runtime.tool_validation import public_tool_schema, validate_tool_arguments
 from runtime.serialization import serialize_yurutme_input
 
 
@@ -132,10 +132,7 @@ def _few_shot_messages(action: str) -> list[dict[str, str]]:
                 conversation_history=[],
                 state=_EMPTY_STATE,
                 action=example_action,
-                tool_schema={
-                    key: value for key, value in tool.items()
-                    if not key.startswith("_")
-                },
+                tool_schema=public_tool_schema(tool),
                 placeholder=tool.get("placeholder"),
             ),
         })
@@ -144,6 +141,29 @@ def _few_shot_messages(action: str) -> list[dict[str, str]]:
             "content": json.dumps(arguments, ensure_ascii=False),
         })
     return messages
+
+
+def request_message(
+    *,
+    user_prompt: str,
+    conversation_history: Sequence[Mapping[str, Any]],
+    state: Mapping[str, Any],
+    action: str,
+    tool_schema: Mapping[str, Any],
+    placeholder: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    """The request turn, shared by inference and training data (datatools)."""
+    return {
+        "role": "user",
+        "content": serialize_yurutme_input(
+            user_prompt=user_prompt,
+            conversation_history=conversation_history,
+            state=state,
+            action=action,
+            tool_schema=tool_schema,
+            placeholder=placeholder,
+        ),
+    }
 
 
 InferenceFn = Callable[[dict[str, Any]], Mapping[str, Any] | str]
@@ -222,17 +242,14 @@ class YurutmeRuntime:
             messages = [
                 {"role": "system", "content": YURUTME_SYSTEM_PROMPT},
                 *_few_shot_messages(payload["action"]),
-                {
-                    "role": "user",
-                    "content": serialize_yurutme_input(
-                        user_prompt=payload["user_prompt"],
-                        conversation_history=payload["conversation_history"],
-                        state=payload["state"],
-                        action=payload["action"],
-                        tool_schema=payload["tool_schema"],
-                        placeholder=payload["placeholder"],
-                    ),
-                },
+                request_message(
+                    user_prompt=payload["user_prompt"],
+                    conversation_history=payload["conversation_history"],
+                    state=payload["state"],
+                    action=payload["action"],
+                    tool_schema=payload["tool_schema"],
+                    placeholder=payload["placeholder"],
+                ),
             ]
             if correction is not None:
                 messages.append({

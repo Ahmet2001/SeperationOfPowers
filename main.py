@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.local_tools import BUILTIN_TOOL_REGISTRY, execute_builtin_local
-from runtime.tool_validation import validate_tool_arguments
+from runtime.tool_validation import public_tool_schema, validate_tool_arguments
 from runtime.mail_clarification import (
     clarification_question,
     is_mail_cancel_request,
@@ -183,19 +183,17 @@ class AgentPipeline:
             if placeholder is not None and not isinstance(placeholder, Mapping):
                 raise TypeError(f"Invalid placeholder for action {action!r}.")
 
-            public_tool_schema = {
-                key: value for key, value in tool.items() if not str(key).startswith("_")
-            }
+            tool_schema = public_tool_schema(tool)
             arguments = self.yurutme.run(
                 user_prompt=user_prompt,
                 conversation_history=history,
                 state=state,
                 action=action,
-                tool_schema=public_tool_schema,
+                tool_schema=tool_schema,
                 placeholder=placeholder,
             )
             arguments = validate_tool_arguments(
-                action, arguments, public_tool_schema
+                action, arguments, tool_schema
             )
             self._trace("yurutme", step=step_index, action=action, arguments=arguments)
 

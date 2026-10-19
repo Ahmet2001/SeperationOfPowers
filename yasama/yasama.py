@@ -205,6 +205,23 @@ def _few_shot_messages() -> list[dict[str, str]]:
         messages.append({"role": "assistant", "content": action})
     return messages
 
+def request_message(
+    *,
+    user_prompt: str,
+    conversation_history: Sequence[Mapping[str, Any]],
+    state: Mapping[str, Any],
+) -> dict[str, str]:
+    """The request turn, shared by inference and training data (datatools)."""
+    return {
+        "role": "user",
+        "content": serialize_yasama_input(
+            user_prompt=user_prompt,
+            conversation_history=conversation_history,
+            state=state,
+        ),
+    }
+
+
 InferenceFn = Callable[[dict[str, Any]], str]
 
 
@@ -253,14 +270,11 @@ class YasamaRuntime:
             messages = [
                 {"role": "system", "content": YASAMA_SYSTEM_PROMPT},
                 *_few_shot_messages(),
-                {
-                    "role": "user",
-                    "content": serialize_yasama_input(
-                        user_prompt=payload["user_prompt"],
-                        conversation_history=payload["conversation_history"],
-                        state=payload["state"],
-                    ),
-                },
+                request_message(
+                    user_prompt=payload["user_prompt"],
+                    conversation_history=payload["conversation_history"],
+                    state=payload["state"],
+                ),
             ]
             return self._backend.generate(messages, config=self._generation_config)
 

@@ -30,6 +30,11 @@ def _matches_type(value: Any, expected: str) -> bool:
     return False
 
 
+def public_tool_schema(tool: Mapping[str, Any]) -> dict[str, Any]:
+    """The registry entry as Yurutme sees it: runtime-only keys start with "_"."""
+    return {key: value for key, value in tool.items() if not str(key).startswith("_")}
+
+
 def validate_tool_arguments(
     action: str, arguments: Any, tool_schema: Mapping[str, Any]
 ) -> dict[str, Any]:

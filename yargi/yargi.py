@@ -115,6 +115,27 @@ def _history_messages(
 InferenceFn = Callable[[dict[str, Any]], str]
 
 
+def request_messages(
+    *,
+    user_prompt: str,
+    conversation_history: Sequence[Mapping[str, Any]],
+    observations: Sequence[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    """Recent history turns plus the request turn, shared by inference and
+    training data (datatools)."""
+    return [
+        *_history_messages(conversation_history),
+        {
+            "role": "user",
+            "content": serialize_yargi_input(
+                user_prompt=user_prompt,
+                conversation_history=[],
+                observations=observations,
+            ),
+        },
+    ]
+
+
 class YargiRuntime:
     """Owns Yargi inference and returns the final natural-language response."""
 
@@ -167,6 +188,11 @@ class YargiRuntime:
             return self._inference_fn(payload)
 
         if self._backend is not None:
+            turns = request_messages(
+                user_prompt=payload["user_prompt"],
+                conversation_history=payload["conversation_history"],
+                observations=payload["observations"],
+            )
             messages = [
                 {
                     "role": "system",
@@ -181,16 +207,8 @@ class YargiRuntime:
                 },
                 # With real history the model cannot tell example turns from
                 # the conversation and repeats example observations as facts.
-                *(_history_messages(payload["conversation_history"])
-                  or _few_shot_messages()),
-                {
-                    "role": "user",
-                    "content": serialize_yargi_input(
-                        user_prompt=payload["user_prompt"],
-                        conversation_history=[],
-                        observations=payload["observations"],
-                    ),
-                },
+                *([] if turns[:-1] else _few_shot_messages()),
+                *turns,
             ]
             return self._backend.generate(messages, config=self._generation_config)
 
