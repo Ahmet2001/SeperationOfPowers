@@ -56,6 +56,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 BACKEND_NAMES = ("ollama", "llamacpp", "mercan-cli", "libmercan")
 ROLE_NAMES = ("yasama", "yurutme", "yargi")
+# libmercan's own default is 4096. Observations reach Yurutme and Yargi
+# untruncated (PROJECT_MASTER §3.2), so roles get 8192; the Mercan/NedoLM
+# checkpoints declare a 32768-token context.
+LIBMERCAN_DEFAULT_N_CTX = 8192
 # Executors that ship with the CLI and need no --executor hook.
 BUILTIN_EXECUTORS = frozenset({"local_readonly", "web"})
 
@@ -175,7 +179,7 @@ def _build_backend(role: str, config: Mapping[str, Any]):
             gpu_layers=_optional_int(config.get("gpu_layers")),
             use_mmap=_optional_bool(config.get("use_mmap")),
             check_tensors=_optional_bool(config.get("check_tensors")),
-            n_ctx=_optional_int(config.get("n_ctx")),
+            n_ctx=_optional_int(config.get("n_ctx")) or LIBMERCAN_DEFAULT_N_CTX,
             n_batch=_optional_int(config.get("n_batch")),
             threads=_optional_int(config.get("threads")),
             threads_batch=_optional_int(config.get("threads_batch")),

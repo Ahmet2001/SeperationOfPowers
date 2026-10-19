@@ -2,7 +2,7 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.2  
+**Sürüm:** 0.3  
 **Tarih:** 2026-10-19  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
@@ -320,6 +320,24 @@ turn_index          → konuşma turu
 
 `completed_actions` action **adı** listesidir. Gemini distil verisindeki `[{"action": ..., "status": ...}]` biçimi normalizasyonda ada indirgenir; status bilgisi observation'larda zaten vardır.
 
+### Rollerin gördüğü observation ayrıntısı (v0.3)
+
+Observation'lar **kesilmez**. Her rol işi için gereken ayrıntıyı görür:
+
+```text
+Yasama  : STATE içindeki her observation yalnız {action, status, error}
+          (data/içerik yok — Yasama yalnız neyin çalıştığını ve nasıl bittiğini bilmeli)
+Yürütme : STATE içindeki observation'lar tam (önceki sonuçtan argüman çıkarır,
+          örn. FILE_READ sonrası FILE_EDIT'in old_text'i)
+Yargı   : <tool_observations> tam
+```
+
+Serialize edilen STATE'te `last_observation`, `recent_observations` listesinin son öğesiyle aynıysa yazılmaz; aynı içerik bir kez taşınır. Farklıysa korunur. Pipeline'ın kendi state nesnesi değişmez; bu yalnız modele giden metnin biçimidir.
+
+Uygulama: `runtime/serialization.py` → `yasama_state`, `yurutme_state`.
+
+Context: libmercan rolleri varsayılan **8192** token context ile açılır (config'te `n_ctx` verilirse o geçerlidir). Mercan/NedoLM 0.8B checkpoint'leri GGUF metadata'sında 32768 context bildirir. 8192'ye sığmayan içerik kesilmez; büyük dosyalar çok adımlı turda parça parça okunur (FILE_READ'e `offset` eklenmesi tool listesi revizyonunda — §14).
+
 ---
 
 # 4. Training Serialization İlkeleri
@@ -394,7 +412,7 @@ Yargı   : <istek>
 
 Yargı'nın konuşma geçmişi user mesajına JSON olarak gömülmez; son 6 mesaj gerçek `kullanici` / `asistan` turları olarak verilir. Geçmişteki kullanıcı mesajları da aynı biçimde (`<istek>` + boş `<tool_observations>[]`) serialize edilir. Gerekçe: JSON bloğu küçük checkpoint'lerde cevap olarak geri kopyalandı ve her turda büyüdü.
 
-Yasama'ya geçmişin hangi biçimde verileceği §14'te açık karardır.
+Yasama'nın konuşma geçmişi (v0.3): `CONVERSATION_HISTORY` bloğu yalnız turun **ilk adımında** (henüz tool çalışmamışken, `completed_actions` boş) verilir; "aynısını tests için de yap" gibi istekler bu adımda çözülür. Bir tool çalıştıktan sonraki adımlarda Yasama yalnız USER + adım zinciri (STATE) görür; karar artık "mevcut istek bitti mi" sorusudur ve önceki turlar yalnız eski action'ların kopyalanmasına yol açar. Yürütme her adımda geçmişi görmeye devam eder.
 
 ---
 
@@ -807,36 +825,16 @@ Aşağıdaki konular henüz bu dosyada kesinleştirilmemiştir ve adım adım ka
 - Yasama'nın fiziksel model/checkpoint standardı
 - Yürütme ve Yargı tek checkpoint mi iki checkpoint mi olacak
 - tokenizer/chat-template kesin sürümü
-- max sequence length ve truncation politikaları
+- max sequence length (runtime varsayılanı 8192 olarak kararlaştırıldı — §3.2; training max length açık)
 - ortak experiment/run directory standardı
 - checkpoint naming convention
 - evaluator script contract'ları
 - runtime service/process topolojisi
 - tool registry'nin canonical fiziksel şeması
 - tool listesinin yeniden düzenlenmesi (hesaplama tool'u dahil; calculator verisi buna bağlı)
-- observation kısaltma politikası (aşağıda)
-- Yasama'ya konuşma geçmişinin hangi biçimde verileceği (aşağıda)
 ```
 
 Bu konularda karar verilene kadar mevcut davranış "resmi standart" gibi varsayılmamalıdır.
-
-### Açık karar: observation kısaltma
-
-Mevcut runtime davranışı (geçici; 4k context taşmasını önlemek için eklendi):
-
-```text
-Yasama / Yürütme STATE : string > 60 karakter → ilk 60 + "… (+N karakter)"
-                         liste > 3 öğe       → ilk 3 + "… (+N öğe)"
-Yargı observations     : string > 1500 karakter, liste > 10 öğe, aynı işaretle
-```
-
-Ölçülen ihtiyaç: tek bir orta boy dosya okuması (main.py, ~11k karakter) kısaltmasız ~7.5k token STATE üretiyordu ve iki kez taşınıyordu (`last_observation` + `recent_observations`). Kısaltmayla en büyük Yasama prompt'u 4096 içinde ~3.8k token.
-
-Kullanıcı tercihi: içerik kesilmemeli. Karar verilecek alternatifler: kısaltmayı kaldırıp daha büyük context; yalnız Yasama/Yürütme'de içerik alanlarını çıkarıp Yargı'ya tam vermek; ya da mevcut kısaltmayı sözleşmeye almak. Karar verilene kadar training verisi bu kısaltma işaretlerini içermez.
-
-### Açık karar: Yasama geçmiş biçimi
-
-Mevcut runtime: konuşma geçmişi Yasama'ya `CONVERSATION_HISTORY` JSON bloğu olarak, mevcut turun adım zinciri `STATE` (completed_actions / observations) içinde verilir. Çok adımlı turlarda adım zincirinin, tek adımlı turlarda isteğin nasıl taşınacağı netleştirilecek.
 
 ---
 
@@ -881,6 +879,14 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.3 — 2026-10-19
+
+- §3.2: Observation'lar kesilmez. Yasama observation'ların yalnız action/status/error'unu görür; Yürütme ve Yargı tam görür. Serialize edilen STATE'te tekrar eden `last_observation` bir kez yazılır.
+- §3.2: libmercan rolleri için varsayılan context 8192; büyük dosyalar parça parça okunacak (FILE_READ `offset`, tool listesi revizyonu).
+- §4: Yasama'ya konuşma geçmişi yalnız turun ilk adımında verilir; sonraki adımlarda yalnız adım zinciri.
+- §14: "observation kısaltma" ve "Yasama geçmiş biçimi" açık kararları kapatıldı.
+- Ölçüm notu: genel 0.8B checkpoint, başarılı bir tool sonrasında FINISH'i hiçbir STATE görünümünde güvenilir seçemiyor (5 senaryoda 0–1/5; kısaltmalı eski görünüm 0/5). FINISH vs CONTINUE eğitimle çözülecek; o zamana kadar tekrar eden action+argüman koruması turu Yargı'ya bağlar.
 
 ## 0.2 — 2026-10-19
 

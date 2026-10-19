@@ -5,21 +5,21 @@
       "model": "/models/yasama.mercan",
       "threads": 2,
       "device": "auto",
-      "n_ctx": 4096
+      "n_ctx": 8192
     },
     "yurutme": {
       "backend": "libmercan",
       "model": "/models/yurutme.mercan",
       "threads": 2,
       "device": "auto",
-      "n_ctx": 4096
+      "n_ctx": 8192
     },
     "yargi": {
       "backend": "libmercan",
       "model": "/models/yargi.mercan",
       "threads": 2,
       "device": "auto",
-      "n_ctx": 4096
+      "n_ctx": 8192
     }
   },
   "pipeline": {"max_steps": 12, "tool_registry": null, "executor": null}
