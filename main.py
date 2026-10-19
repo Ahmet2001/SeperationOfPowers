@@ -232,7 +232,9 @@ class AgentPipeline:
             executed_calls.add(call)
 
             if tool.get("_builtin_executor") == "local_readonly":
-                raw_observation = execute_builtin_local(action, arguments)
+                raw_observation = execute_builtin_local(
+                    action, arguments, user_prompt=user_prompt
+                )
             else:
                 raw_observation = self.executor(action, arguments)
 

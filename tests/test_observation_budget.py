@@ -24,7 +24,7 @@ from yurutme.yurutme import YurutmeRuntime
 def read_observation(content: str) -> dict:
     return {
         "action": "FILE_READ",
-        "data": {"path": "main.py", "content": content, "truncated": False},
+        "data": {"path": "main.py", "content": content},
         "status": "success",
         "error": None,
     }

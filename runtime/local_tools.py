@@ -8,8 +8,12 @@ configured external executor.
 
 from __future__ import annotations
 
+import math
+import re
 from pathlib import Path
 from typing import Any, Mapping
+
+from ethosoftlib.rag import Hit, Index, tokenize
 
 
 # Only skip generated dependency/cache trees on broad workspace searches.
@@ -17,6 +21,29 @@ SEARCH_IGNORED_DIRS = frozenset({
     ".git", ".venv", "venv", "__pycache__", ".pytest_cache",
     ".mypy_cache", "node_modules",
 })
+
+# A file up to this many characters is returned whole; a longer one (and every
+# PDF past it) is answered with its best-matching chunks up to the same total.
+# Serialized observations measured 2.1-2.7 characters per Mercan token, so 7000
+# characters stay under ~3.4k tokens: with Yargi's ~2.4k prompt and 768 answer
+# tokens (Yurutme: ~2.9k + 512) that leaves room in the 8k context for a second
+# small observation.
+READ_CHAR_BUDGET = 7000
+
+CALCULATE_OPERATIONS = ("add", "subtract", "multiply", "divide", "power", "sqrt")
+# Keeps a**b from running away on integers (9 ** 10 ** 9).
+MAX_POWER_EXPONENT = 1000
+# Integers from here on are reported in scientific notation: a 200-digit
+# result was copied digit by digit into the answer.
+MAX_EXACT_INTEGER = 10**21
+
+# Request words that say what to do with the file, not what is in it, as
+# ethosoftlib.rag search terms (five-letter prefixes). With them a question
+# like "X.md dosyasında ... ne diyor?" ranked the file's title chunk first.
+_REQUEST_TERMS = frozenset(tokenize(
+    "dosya dosyası dosyasında dosyasını oku okuyup göster anlat açıkla söyle "
+    "özetle diyor yazıyor nedir neler hangi göre içinde içeriği bul"
+))
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -58,18 +85,20 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "FILE_READ": {
         "description": (
-            "Adı bilinen tek bir metin dosyasının içeriğini okur. Hangi dosyada "
-            "olduğu bilinmeyen bir metni aramak için FILE_SEARCH kullanılır."
+            "Adı bilinen tek bir dosyayı (metin veya PDF) okur. Kısa dosyanın tamamını, "
+            "uzun dosyanın soruyla en ilgili bölümlerini satır numaralarıyla getirir. "
+            "Hangi dosyada olduğu bilinmeyen bir metni aramak için FILE_SEARCH kullanılır."
         ),
         "parameters": _schema({
             "path": {"type": "string", "description": "Okunacak dosyanın yolu."},
-            "max_chars": {
-                "type": "integer",
-                "description": "Okunacak en fazla karakter sayısı.",
-                "default": 20000,
+            "query": {
+                "type": "string",
+                "description": (
+                    "Uzun dosyada aranacak konu. Boş bırakılırsa kullanıcının isteği kullanılır."
+                ),
             },
         }, ["path"]),
-        "placeholder": {"path": None, "max_chars": 20000},
+        "placeholder": {"path": None},
         "_builtin_executor": "local_readonly",
     },
     "FILE_SEARCH": {
@@ -103,6 +132,29 @@ BUILTIN_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             "recursive": True,
             "max_results": 50,
         },
+        "_builtin_executor": "local_readonly",
+    },
+    # Schema of the training data's calculator family (operation/a/b, result
+    # observation); sqrt and power extend its four operations.
+    "CALCULATE": {
+        "description": (
+            "İki sayı üzerinde aritmetik işlem yapar (toplama, çıkarma, çarpma, bölme, üs) "
+            "veya bir sayının karekökünü alır ve sonucu döndürür. Sayıları kullanıcının "
+            "isteğinden al; yazıyla yazılmış sayıları rakama çevir."
+        ),
+        "parameters": _schema({
+            "operation": {
+                "type": "string",
+                "enum": list(CALCULATE_OPERATIONS),
+                "description": (
+                    "add: a + b, subtract: a - b, multiply: a × b, divide: a ÷ b, "
+                    "power: a üssü b, sqrt: a'nın karekökü."
+                ),
+            },
+            "a": {"type": "number", "description": "İlk sayı."},
+            "b": {"type": "number", "description": "İkinci sayı; sqrt için gerekmez."},
+        }, ["operation", "a"]),
+        "placeholder": {"operation": None, "a": None, "b": None},
         "_builtin_executor": "local_readonly",
     },
     "FILE_CREATE": {
@@ -232,6 +284,135 @@ def _observation(action: str, *, data: Mapping[str, Any] | None = None, error: s
     }
 
 
+def _file_sections(path: Path) -> list[tuple[str, dict[str, Any]]]:
+    """Text of ``path`` as (text, metadata) parts: one per PDF page, else one."""
+    if path.suffix.lower() == ".pdf":
+        from ethosoftlib import ocr
+
+        document = ocr.read(path, allow_missing=True)
+        return [(page.text, {"page": page.number}) for page in document.pages if page.text]
+    with path.open("rb") as handle:
+        if b"\0" in handle.read(4096):
+            raise ValueError("Bu bir metin dosyası değil; okunamıyor.")
+    return [(path.read_text(encoding="utf-8", errors="replace"), {})]
+
+
+def _retrieval_query(query: str, user_prompt: str, relative: str) -> str:
+    """Search terms for a long file: Yurutme's query plus the user's request
+    (Yurutme queries were seen translated to English or made up), without
+    the file's own name and request words."""
+    text = f"{query} {user_prompt}"
+    # Only the written path goes: "kurulumu" stays in a question about kurulum.md.
+    for name in sorted({relative, Path(relative).name}, key=len, reverse=True):
+        text = re.sub(re.escape(name), " ", text, flags=re.IGNORECASE)
+    terms: list[str] = []
+    for term in tokenize(text):
+        if term not in _REQUEST_TERMS and term not in terms:
+            terms.append(term)
+    return " ".join(terms)
+
+
+def _read_file(path: Path, relative: str, query: str) -> dict[str, Any]:
+    action = "FILE_READ"
+    sections = _file_sections(path)
+    total_chars = sum(len(text) for text, _ in sections)
+    if total_chars <= READ_CHAR_BUDGET:
+        return _observation(action, data={
+            "path": relative,
+            "content": "\n\n".join(text for text, _ in sections),
+        })
+
+    index = Index()
+    for text, metadata in sections:
+        index.add(text, relative, metadata=metadata)
+    hits = index.search(query, k=len(index)) if query else []
+    matched = bool(hits)
+    if not matched:
+        # No query term occurs in the file: show its beginning instead.
+        hits = [Hit(chunk.text, chunk.source, chunk.line, 0.0, dict(chunk.metadata))
+                for chunk in index.chunks]
+    picked: list[Hit] = []
+    used = 0
+    for hit in hits:
+        if used + len(hit.text) > READ_CHAR_BUDGET:
+            if picked:
+                break
+            continue
+        picked.append(hit)
+        used += len(hit.text)
+    picked.sort(key=lambda hit: (hit.metadata.get("page", 0), hit.line))
+    # One content string, as in the training data's FILE_READ observations:
+    # given a list of section objects, Yargi dumped them back as JSON.
+    content = "\n\n".join(
+        (f"[sayfa {hit.metadata['page']}, satır {hit.line}]" if "page" in hit.metadata
+         else f"[satır {hit.line}]") + "\n" + hit.text
+        for hit in picked
+    )
+    return _observation(action, data={
+        "path": relative,
+        "content": content,
+        "partial": True,
+        "query": query,
+        "matched": matched,
+        "total_chars": total_chars,
+    })
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _calculate(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    action = "CALCULATE"
+    operation, a, b = arguments.get("operation"), arguments.get("a"), arguments.get("b")
+    if operation not in CALCULATE_OPERATIONS:
+        return _observation(action, error=(
+            f"Bilinmeyen işlem: {operation!r}. Geçerli işlemler: "
+            + ", ".join(CALCULATE_OPERATIONS) + "."
+        ))
+    if not _number(a) or (operation != "sqrt" and not _number(b)):
+        return _observation(action, error=f"{operation} için a ve b sayı olmalıdır.")
+    try:
+        if operation == "add":
+            result = a + b
+        elif operation == "subtract":
+            result = a - b
+        elif operation == "multiply":
+            result = a * b
+        elif operation == "divide":
+            if b == 0:
+                return _observation(action, error="Sıfıra bölme tanımsızdır.")
+            result = a / b
+        elif operation == "power":
+            if abs(b) > MAX_POWER_EXPONENT:
+                return _observation(action, error=f"Üs en fazla {MAX_POWER_EXPONENT} olabilir.")
+            if a == 0 and b < 0:
+                return _observation(action, error="Sıfırın negatif kuvveti tanımsızdır.")
+            result = a ** b
+        else:
+            if a < 0:
+                return _observation(action, error="Negatif sayının gerçel karekökü yoktur.")
+            result = math.sqrt(a)
+    except OverflowError:
+        return _observation(action, error="Sonuç çok büyük; hesaplanamadı.")
+    if isinstance(result, complex):
+        return _observation(action, error="Sonuç gerçel bir sayı değil.")
+    if isinstance(result, int) and abs(result) >= MAX_EXACT_INTEGER:
+        try:
+            result = float(result)
+        except OverflowError:
+            return _observation(action, error="Sonuç çok büyük; hesaplanamadı.")
+    if isinstance(result, float):
+        if not math.isfinite(result):
+            return _observation(action, error="Sonuç çok büyük; hesaplanamadı.")
+        # 12 significant digits hide binary noise (0.1 + 0.2) without
+        # changing any result a person would write down.
+        result = float(f"{result:.12g}")
+        if result.is_integer() and abs(result) < 1e15:
+            result = int(result)
+    return _observation(action, data={"result": result})
+
+
 def _resolve_workspace_path(raw_path: Any, workspace: Path) -> Path:
     value = "." if raw_path in {None, ""} else str(raw_path)
     candidate = Path(value).expanduser()
@@ -250,8 +431,13 @@ def execute_builtin_local(
     arguments: Mapping[str, Any],
     *,
     workspace: str | Path | None = None,
+    user_prompt: str | None = None,
 ) -> dict[str, Any]:
-    """Execute one built-in read-only action inside the current workspace."""
+    """Execute one built-in read-only action inside the current workspace.
+
+    ``user_prompt`` is the retrieval query of a long FILE_READ when Yurutme
+    left ``query`` empty, as the training data's FILE_READ calls do.
+    """
 
     root = Path(workspace or Path.cwd()).resolve()
     try:
@@ -280,17 +466,14 @@ def execute_builtin_local(
             path = _resolve_workspace_path(arguments.get("path"), root)
             if not path.is_file():
                 return _observation(action, error=f"File not found: {path}")
-            max_chars = max(1, min(int(arguments.get("max_chars", 20000)), 200000))
-            content = path.read_text(encoding="utf-8", errors="replace")
-            truncated = len(content) > max_chars
-            return _observation(
-                action,
-                data={
-                    "path": str(path.relative_to(root)),
-                    "content": content[:max_chars],
-                    "truncated": truncated,
-                },
+            relative = str(path.relative_to(root))
+            query = _retrieval_query(
+                str(arguments.get("query") or ""), user_prompt or "", relative
             )
+            return _read_file(path, relative, query)
+
+        if action == "CALCULATE":
+            return _calculate(arguments)
 
         if action == "FILE_SEARCH":
             query = str(arguments.get("query") or "")

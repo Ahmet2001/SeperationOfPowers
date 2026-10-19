@@ -143,8 +143,8 @@ class StructuredToolTests(unittest.TestCase):
             original = local_tools.execute_builtin_local
             with patch(
                 "main.execute_builtin_local",
-                side_effect=lambda action, args: original(
-                    action, args, workspace=root
+                side_effect=lambda action, args, **kwargs: original(
+                    action, args, workspace=root, **kwargs
                 ),
             ):
                 result = pipeline.run('Projede "OllamaBackend" geçen dosyayı bul.')

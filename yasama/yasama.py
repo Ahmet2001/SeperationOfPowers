@@ -19,6 +19,7 @@ CANONICAL_ACTIONS = frozenset(
         "FILE_READ",
         "FILE_SEARCH",
         "FILE_LIST",
+        "CALCULATE",
         "FILE_CREATE",
         "FILE_EDIT",
         "FILE_DELETE",
@@ -36,7 +37,7 @@ _YASAMA_PROMPT_TEMPLATE = """Sen Mercan Yasama modelisin.
 Görevin kullanıcı isteği, konuşma geçmişi ve mevcut state'e bakarak yalnızca bir sonraki canonical action'ı seçmektir.
 Argüman üretme, açıklama yapma ve kullanıcıya final cevap yazma.
 Çıktın yalnızca aşağıdaki action isimlerinden tam olarak biri olmalıdır:
-RESPOND, WEB_SEARCH, WEB_OPEN, FILE_READ, FILE_SEARCH, FILE_LIST, FILE_CREATE, FILE_EDIT, FILE_DELETE, FILE_MOVE, CODE_EXECUTE, SHELL_EXECUTE, DOWNLOAD, SEND_MAIL, ASK_CLARIFICATION, FINISH.
+{action_names}.
 
 En üstteki USER alanı mevcut istektir ve her zaman birincildir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki isteğin action'ını yeni USER isteğine kopyalama.
 
@@ -48,6 +49,7 @@ Niyet eşleme örnekleri:
 - Kullanıcı klasördeki dosyaları listelemek istiyorsa: FILE_LIST
 - Kullanıcı bir dosyanın içeriğini okumak istiyorsa: FILE_READ
 - Kullanıcı dosyalar içinde metin aramak istiyorsa: FILE_SEARCH
+- Kullanıcı sayılarla bir hesap (toplama, çıkarma, çarpma, bölme, üs, karekök) istiyorsa: CALCULATE
 - Kullanıcı internette arama yapmak istiyorsa: WEB_SEARCH
 - Kullanıcı belirli bir web sayfasını açmak istiyorsa: WEB_OPEN
 - Kullanıcı terminal/shell komutunu doğrudan çalıştırmak istiyorsa: SHELL_EXECUTE
@@ -74,9 +76,10 @@ _CONTROL_ACTION_DESCRIPTIONS = {
 }
 _ACTION_ORDER = (
     "RESPOND", "WEB_SEARCH", "WEB_OPEN", "FILE_READ", "FILE_SEARCH", "FILE_LIST",
-    "FILE_CREATE", "FILE_EDIT", "FILE_DELETE", "FILE_MOVE", "CODE_EXECUTE",
+    "CALCULATE", "FILE_CREATE", "FILE_EDIT", "FILE_DELETE", "FILE_MOVE", "CODE_EXECUTE",
     "SHELL_EXECUTE", "DOWNLOAD", "SEND_MAIL", "ASK_CLARIFICATION", "FINISH",
 )
+assert frozenset(_ACTION_ORDER) == CANONICAL_ACTIONS
 
 
 def _action_descriptions() -> str:
@@ -91,8 +94,8 @@ def _action_descriptions() -> str:
 
 
 YASAMA_SYSTEM_PROMPT = _YASAMA_PROMPT_TEMPLATE.replace(
-    "{action_descriptions}", _action_descriptions()
-)
+    "{action_names}", ", ".join(_ACTION_ORDER)
+).replace("{action_descriptions}", _action_descriptions())
 
 _EMPTY_STATE: dict[str, Any] = {
     "completed_actions": [],
@@ -110,6 +113,12 @@ _LIST_OBSERVATION: dict[str, Any] = {
 _READ_OBSERVATION: dict[str, Any] = {
     "action": "FILE_READ",
     "data": {"path": "README.md"},
+    "status": "success",
+    "error": None,
+}
+_CALCULATE_OBSERVATION: dict[str, Any] = {
+    "action": "CALCULATE",
+    "data": {"result": 156.25},
     "status": "success",
     "error": None,
 }
@@ -131,6 +140,9 @@ YASAMA_FEW_SHOT_EXAMPLES: tuple[tuple[str, list[dict[str, str]], dict[str, Any],
         "içerikli bir mail gönder.",
         [], _EMPTY_STATE, "SEND_MAIL",
     ),
+    # After the original examples: placed earlier, it moved unrelated
+    # decisions of the untrained checkpoint (a greeting became WEB_SEARCH).
+    ("1250 lirayı 8 kişiye eşit bölersek kişi başı ne düşer?", [], _EMPTY_STATE, "CALCULATE"),
     (
         "README.md dosyasını okuyup özetle.",
         [],
@@ -151,6 +163,18 @@ YASAMA_FEW_SHOT_EXAMPLES: tuple[tuple[str, list[dict[str, str]], dict[str, Any],
             "completed_actions": ["FILE_LIST"],
             "last_observation": _LIST_OBSERVATION,
             "recent_observations": [_LIST_OBSERVATION],
+            "step_index": 1,
+        },
+        "FINISH",
+    ),
+    (
+        "1250 lirayı 8 kişiye eşit bölersek kişi başı ne düşer?",
+        [],
+        {
+            **_EMPTY_STATE,
+            "completed_actions": ["CALCULATE"],
+            "last_observation": _CALCULATE_OBSERVATION,
+            "recent_observations": [_CALCULATE_OBSERVATION],
             "step_index": 1,
         },
         "FINISH",

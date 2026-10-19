@@ -2,7 +2,7 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.3  
+**Sürüm:** 0.4  
 **Tarih:** 2026-10-19  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
@@ -71,7 +71,7 @@ Yanlış çıktı örneği:
 FILE_CREATE(path="notes.txt", content="Merhaba")
 ```
 
-### Canonical 16-class ontology
+### Canonical 17-class ontology
 
 ```text
 RESPOND
@@ -80,6 +80,7 @@ WEB_OPEN
 FILE_READ
 FILE_SEARCH
 FILE_LIST
+CALCULATE
 FILE_CREATE
 FILE_EDIT
 FILE_DELETE
@@ -92,9 +93,9 @@ ASK_CLARIFICATION
 FINISH
 ```
 
-Closed 16-class Yasama modeli yalnız açıkça bu ontology'ye uygun veya güvenli şekilde map edilmiş kayıtlarla eğitilmelidir.
+Closed 17-class Yasama modeli yalnız açıkça bu ontology'ye uygun veya güvenli şekilde map edilmiş kayıtlarla eğitilmelidir.
 
-Kaynak action semantic olarak birebir eşleşmiyorsa zorla 16 sınıftan birine map edilmemelidir.
+Kaynak action semantic olarak birebir eşleşmiyorsa zorla 17 sınıftan birine map edilmemelidir.
 
 Örnek güvenli alias'ler:
 
@@ -105,6 +106,7 @@ edit_file       → FILE_EDIT
 list_directory  → FILE_LIST
 search_code     → FILE_SEARCH
 run_command     → SHELL_EXECUTE
+calculator      → CALCULATE      (yalnız operation/a/b şemalı kayıtlar — §6)
 ```
 
 Örnek zorlanmaması gerekenler:
@@ -114,9 +116,12 @@ REQUEST_CONFIRMATION ≠ ASK_CLARIFICATION
 send_message         ≠ SEND_MAIL
 write_file           ≠ otomatik FILE_CREATE
 calculator family    ≠ otomatik CODE_EXECUTE
+calculate_bmi, calculate_loan_payment, ... ≠ otomatik CALCULATE  (alan formülleri; §6)
 ```
 
-Unmapped source action provenance için korunabilir; ancak canonical 16-class router eğitimine otomatik dahil edilmez.
+Unmapped source action provenance için korunabilir; ancak canonical 17-class router eğitimine otomatik dahil edilmez.
+
+CALCULATE 0.4'te 17. sınıf olarak eklendi (§6). §7'deki kapsam sayıları eklemeden önceki 16 sınıfa göredir.
 
 ---
 
@@ -156,15 +161,16 @@ target = json.dumps(row["target_arguments"], ensure_ascii=False)
 
 Placeholder yaklaşımında model yeni key icat etmemeli, verilen schema/placeholder ile uyumlu alanları doldurmalıdır.
 
-### Geçerli tool şemaları (v0.2)
+### Geçerli tool şemaları (v0.4)
 
 Fiziksel registry şeması §14'te açık karar olarak duruyor; o karara kadar geçerli şemalar runtime registry'sidir (`runtime/local_tools.py` → `BUILTIN_TOOL_REGISTRY`). Dataset normalizasyonu bu alan adlarına göre yapılır. Zorunlu alanlar **kalın**.
 
 | Action | Argümanlar | Not |
 |---|---|---|
 | FILE_LIST | `path`, `pattern`, `recursive` | `pattern` istekten çıkarılan glob'dur (`*.py`); filtre istenmediyse `*` |
-| FILE_READ | **`path`**, `max_chars` | |
+| FILE_READ | **`path`**, `query` | Uzun dosya/PDF'te aranacak konu; boşsa kullanıcının isteği (§3.1) |
 | FILE_SEARCH | **`query`**, `path`, `pattern`, `recursive`, `max_results` | Aranan metin `query`'dir; `pattern` dosya filtresidir |
+| CALCULATE | **`operation`**, **`a`**, `b` | `operation` ∈ add, subtract, multiply, divide, power, sqrt; `b` sqrt dışında gerekli; sayılar JSON number (§6) |
 | FILE_CREATE | **`path`**, **`content`** | |
 | FILE_EDIT | **`path`**, **`old_text`**, **`new_text`** | |
 | FILE_DELETE | **`path`** | |
@@ -273,15 +279,21 @@ provider
 
 Bunlar canonical dört alanın semantiğini değiştirmez.
 
-### Action'a göre `data` şekli (v0.2)
+### Action'a göre `data` şekli (v0.4)
 
 ```text
 FILE_LIST    → {path, pattern, recursive, entries: [...]}
-FILE_READ    → {path, content, truncated}
+FILE_READ    → {path, content}                                   (dosya ≤ 7000 karakter)
+FILE_READ    → {path, content, partial: true, query, matched, total_chars}   (uzun dosya / PDF)
+CALCULATE    → {result}                                          (number)
 FILE_SEARCH  → {query, matches: [{path, line, text}]}
 WEB_SEARCH   → {query, results: [{title, url, snippet}]}     (en fazla 3 sonuç)
 WEB_OPEN     → {url, title, text, truncated}
 ```
+
+Uzun FILE_READ (RAG): dosya `ethosoftlib.rag.Index` (BM25, Türkçe 5 harf kök) ile ~120 kelimelik parçalara bölünür; sorguyla en ilgili parçalar toplam 7000 karakteri geçmeyecek kadar seçilir ve dosyadaki sırayla `content` içinde verilir. Her parçanın başında `[satır N]` (PDF'te `[sayfa P, satır N]`) bulunur. Sorgu, Yürütme'nin `query`'si + kullanıcının isteğidir; okunan dosyanın yazılı adı ve istek kelimeleri (oku, dosya, ne diyor...) çıkarılır. Hiçbir terim eşleşmezse dosyanın başı verilir ve `matched: false` olur. Bölümler ayrı obje listesi değil tek `content` metnidir: training verisindeki FILE_READ observation'ları `{path, content}` biçimindedir ve liste verildiğinde Yargı onu JSON olarak geri döktü. 7000 karakter ölçümle seçildi: serialize edilmiş observation 2.1–2.7 karakter/token, yani ≤ ~3.4k token; Yargı (~2.4k prompt + 768 cevap) ve Yürütme (~2.9k + 512) 8192'ye ikinci küçük bir observation ile sığar.
+
+CALCULATE sonucu Python aritmetiğidir (training verisindeki calculator sonuçlarıyla aynı yöntem); float'lar 12 anlamlı basamağa yuvarlanır (0.1 + 0.2 → 0.3), tam sayıya eşit float int yazılır, 10^21'den büyük tam sayılar bilimsel gösterime geçer. Sıfıra bölme, negatif karekök, |üs| > 1000, bilinmeyen işlem hata observation'ıdır.
 
 Hata durumunda `data` boş obje, `status: "error"`, `error` insan okunur hata metnidir. Executor'ı yapılandırılmamış bir action seçilirse runtime çökmez; `"<ACTION> aracı bu kurulumda yapılandırılmamış; çalıştırılamadı."` hata observation'ı üretir ve Yargı bunu kullanıcıya anlatır.
 
@@ -336,7 +348,7 @@ Serialize edilen STATE'te `last_observation`, `recent_observations` listesinin s
 
 Uygulama: `runtime/serialization.py` → `yasama_state`, `yurutme_state`.
 
-Context: libmercan rolleri varsayılan **8192** token context ile açılır (config'te `n_ctx` verilirse o geçerlidir). Mercan/NedoLM 0.8B checkpoint'leri GGUF metadata'sında 32768 context bildirir. 8192'ye sığmayan içerik kesilmez; büyük dosyalar çok adımlı turda parça parça okunur (FILE_READ'e `offset` eklenmesi tool listesi revizyonunda — §14).
+Context: libmercan rolleri varsayılan **8192** token context ile açılır (config'te `n_ctx` verilirse o geçerlidir). Mercan/NedoLM 0.8B checkpoint'leri GGUF metadata'sında 32768 context bildirir. 8192'ye sığmayan içerik kesilmez: uzun dosyalar FILE_READ'in RAG modunda soruyla ilgili bölümleriyle okunur (§3.1); `offset` ile parça parça okuma yerine bu seçildi.
 
 ---
 
@@ -468,24 +480,22 @@ Runtime aynı sınırı uygular: WEB_SEARCH en fazla 3 sonuç döndürür (`max_
 
 ## Calculator
 
-Calculator family source function/action adları semantic olarak korunur.
-
-Örnekler:
+Runtime tool'u: **CALCULATE** `{operation, a, b}` → observation `{result}` (§2.2, §3.1). Şema `arac_kullanimi` calculator verisinin şemasıdır; yalnız action adı canonical biçime çevrilir:
 
 ```text
-calc
-calculator
-calculate_bmi
-calculate_discount
-calculate_median
-...
+calculator {operation: add|subtract|multiply|divide, a, b}  →  CALCULATE (aynı argümanlar)
+observation {"result": ...}                                 →  aynen
 ```
 
-Bu action'lar otomatik olarak `CODE_EXECUTE`'a map edilmez.
+`power` ve `sqrt` runtime genişletmesidir; veride karşılıkları yoktur, sentetik veriyle öğretilir.
+
+Veri gerçeği (örnekleme, 2026-10-19):
+
+- `harsh8001-calc` ve `yuyijiong-calc`: tek `calculator` tool'u, yukarıdaki şema. Yasama görünümünde her çağrıyı `finish_after_tool` ile **FINISH** izler → "araçtan sonra bitir" için en büyük kaynak.
+- `glaive-v2-calc`: `calculate_tip`, `calculate_bmi`, `calculate_loan_payment`, `calculate_median`... gibi kendi şemalı alan araçları (~60 farklı ad). CALCULATE'e otomatik map edilmez (§2.1); akıbeti §14'te.
+- Gürültü: Yürütme argümanında operand bozulması görüldü (`2247918 + 867` → `a: 22479418`) ve Yargı cevabında sayı bozulması (`1.1833976833976836` → `1.183397668339766836`). Eğitime girmeden filtrelenir: rakamla yazılmış istekte `a`/`b` istekte birebir geçmeli; Yargı cevabı observation'daki sonucu (veya doğru yuvarlanmışını) içermeli.
 
 Calculator observation/result değerleri truncation ile değiştirilmemelidir.
-
-Runtime'da şu an hesaplama tool'u yoktur ve 16-class ontology'de karşılığı bulunmaz. `arac_kullanimi` içindeki calculator ailesi (~136k kayıt) tool listesi yeniden düzenlenene kadar canonical router eğitimine alınmaz (§14).
 
 ---
 
@@ -742,6 +752,7 @@ observation grounding
 Aşağıdakiler eğitimsiz genel checkpoint'leri çalıştırmak için runtime'a eklenmiş geçici desteklerdir. **Training verisine girmezler** ve role özel fine-tune edilmiş checkpoint'lerde kaldırılmalıdırlar:
 
 - **Few-shot turları:** Yasama, Yürütme ve (geçmiş yokken) Yargı prompt'larına önceki `kullanici` / `asistan` turları olarak örnekler eklenir. System prompt içine yazılan örnekler küçük modellerde kopyalandığı için tur biçimi seçildi. Yasama + örnekler ~2.8k token tutar.
+- **FILE_READ sorgu temizliği:** Uzun dosyada Yürütme'nin `query`'sine kullanıcının isteği eklenir; Yürütme'nin sorguyu İngilizceye çevirdiği veya uydurduğu görüldü. Eğitilmiş Yürütme ile yeniden ölçülmeli.
 - **Uzun system prompt kuralları:** Eğitilmiş modelde kısaltılmalıdır; §5'teki kısa prompt hedeftir.
 
 ---
@@ -767,6 +778,7 @@ FILE_CREATE vs FILE_EDIT
 WEB_SEARCH vs WEB_OPEN
 RESPOND vs TOOL
 FINISH vs CONTINUE
+CALCULATE vs CODE_EXECUTE / RESPOND
 ```
 
 ## Yürütme
@@ -779,6 +791,7 @@ whole-call accuracy
 wrong-value leakage
 negation/correction accuracy
 missing-argument behavior
+CALCULATE: operation accuracy, sayı çıkarma (yazıyla yazılmış ve ondalık virgüllü sayılar)
 ```
 
 ## Yargı
@@ -831,7 +844,7 @@ Aşağıdaki konular henüz bu dosyada kesinleştirilmemiştir ve adım adım ka
 - evaluator script contract'ları
 - runtime service/process topolojisi
 - tool registry'nin canonical fiziksel şeması
-- tool listesinin yeniden düzenlenmesi (hesaplama tool'u dahil; calculator verisi buna bağlı)
+- glaive `calculate_*` alan araçları (BMI, kredi, bahşiş...): ayrı tool / sentetik CALCULATE'e çevirme / dışarıda bırakma
 ```
 
 Bu konularda karar verilene kadar mevcut davranış "resmi standart" gibi varsayılmamalıdır.
@@ -879,6 +892,17 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.4 — 2026-10-19
+
+- §2.1, §2.2: **CALCULATE** 17. canonical action. Şema calculator verisinin `{operation, a, b}` şeması + `power` / `sqrt`. `calculator → CALCULATE` güvenli alias; glaive `calculate_*` alan araçları map edilmez.
+- §2.2, §3.1: FILE_READ `max_chars` kaldırıldı, `query` eklendi. Uzun dosya ve PDF `ethosoftlib.rag` (BM25) ile soruya göre okunur; ≤ 7000 karakter dosya tam döner. `truncated` alanı kalktı.
+- §3.1: CALCULATE observation `{result}`; sonuç biçimlendirme ve hata kuralları.
+- §3.2: Büyük dosyalar için `offset` yerine RAG.
+- §6: Calculator politikası yeniden yazıldı: veri eşlemesi, `finish_after_tool` kaynağı, gürültü filtreleri.
+- §12: CALCULATE için Yasama/Yürütme ölçütleri.
+- §14: "tool listesinin yeniden düzenlenmesi" kapandı; glaive alan araçları açık karar olarak kaldı. Tool registry'nin fiziksel şeması hâlâ açık.
+- Ölçüm notu (genel 0.8B checkpoint, few-shot ile): Yasama 5 hesaplama sorusunda CALCULATE'i 0/5 seçti (CODE_EXECUTE, SHELL_EXECUTE veya `SQRT` gibi uydurma adlar); üç örnekli varyant 2/5'e çıktı ama FILE_LIST'i bozdu. Yürütme CALCULATE argümanlarında 3/8 (sayılar çoğunlukla doğru, `operation` çoğunlukla `power`). Her ikisi de calculator verisiyle eğitilecek. Hesap dışı Yasama kararları değişmedi (7 soruda 5/7, eskisiyle aynı).
 
 ## 0.3 — 2026-10-19
 

@@ -44,10 +44,32 @@ YURUTME_FEW_SHOT_EXAMPLES: dict[str, tuple[tuple[str, dict[str, Any]], ...]] = {
             {"path": "docs", "pattern": "*", "recursive": False},
         ),
     ),
-    "FILE_READ": ((
-        "README.md dosyasını okuyup özetle.",
-        {"path": "README.md", "max_chars": 20000},
-    ),),
+    "FILE_READ": (
+        (
+            "README.md dosyasını okuyup özetle.",
+            {"path": "README.md"},
+        ),
+        (
+            "kurulum.md dosyasında Docker kurulumu nasıl anlatılıyor?",
+            {"path": "kurulum.md", "query": "Docker kurulumu"},
+        ),
+    ),
+    # Three operations so no single one is copied; numbers written in words
+    # or with a decimal comma are turned into JSON numbers, as in the data.
+    "CALCULATE": (
+        (
+            "Bir koşucu 42,195 km'yi 3,5 saatte koştu. Saatteki ortalama hızı nedir?",
+            {"operation": "divide", "a": 42.195, "b": 3.5},
+        ),
+        (
+            "Cüzdanımda 75 lira vardı, 18 lira harcadım. Kaç lira kaldı?",
+            {"operation": "subtract", "a": 75, "b": 18},
+        ),
+        (
+            "Yüz kırk dördün karekökü kaç?",
+            {"operation": "sqrt", "a": 144},
+        ),
+    ),
     "FILE_SEARCH": ((
         'Projede "GenerationConfig" geçen yerleri bul.',
         {"query": "GenerationConfig", "path": ".", "pattern": "*",

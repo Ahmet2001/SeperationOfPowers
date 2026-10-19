@@ -301,4 +301,11 @@ and return the canonical observation shape:
 }
 ```
 
-If Yasama selects a tool action while no executor is configured, the CLI stops that turn with an explicit error instead of pretending the tool ran.
+If Yasama selects a tool action while no executor is configured, the action is not run: it produces an error observation (`"<ACTION> aracı bu kurulumda yapılandırılmamış; çalıştırılamadı."`) and Yargi tells the user, instead of pretending the tool ran.
+
+Four actions need no executor and always run in-process: `FILE_LIST`, `FILE_READ`
+and `FILE_SEARCH` (read-only, inside the working directory) and `CALCULATE`
+(`{operation, a, b}` with add, subtract, multiply, divide, power or sqrt). A
+file up to 7000 characters is read whole; a longer file or a PDF is searched
+with `ethosoftlib.rag` and only the sections that match the question (Yurutme's
+`query` plus the user's request) are returned, each marked with its line.

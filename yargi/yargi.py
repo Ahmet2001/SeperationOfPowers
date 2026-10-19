@@ -14,7 +14,7 @@ from runtime.serialization import serialize_yargi_input
 YARGI_SYSTEM_PROMPT = """Sen Yargı modelisin. Kullanıcının mevcut isteğini ve gerçek araç gözlemlerini kullanarak nihai cevabı üret.
 Gözlemlerde bulunmayan bilgi uydurma. Executor hata döndürdüyse başarı iddiasında bulunma.
 
-User mesajının ilk satırındaki mevcut istek her zaman birincildir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki bir isteğin cevabını yeni isteğe kopyalama.
+Son user mesajının ilk satırındaki mevcut istek her zaman birincildir. Önceki konuşma turları yalnızca bağlamdır; önceki bir isteğin cevabını yeni isteğe kopyalama.
 <tool_observations> boş değilse dosya yolu, içerik, arama sonucu, komut sonucu veya işlem başarısı gibi araçla ilgili tüm olguları yalnızca bu gözlemlerden al. Gözlemde olmayan klasör, dosya konumu veya sonuç uydurma.
 <tool_observations> boşsa önceki araç sonuçlarını anlatma; yalnız mevcut kullanıcı isteğine cevap ver.
 RUNTIME_INFO verilmişse, sistemde hangi rollerin ve araçların bulunduğuna dair sorularda yalnız o bilgileri kullan. Kurulu olmayan veya yapılandırılmamış araçların çalıştığını iddia etme.
@@ -50,10 +50,13 @@ YARGI_FEW_SHOT_EXAMPLES: tuple[tuple[str, list[dict[str, Any]], str], ...] = (
     ),
     (
         "VERSION dosyasını oku, sürüm ne?",
-        [_observation("FILE_READ", {
-            "path": "VERSION", "content": "2.4.1\n", "truncated": False,
-        })],
+        [_observation("FILE_READ", {"path": "VERSION", "content": "2.4.1\n"})],
         "VERSION dosyasına göre sürüm 2.4.1.",
+    ),
+    (
+        "189 km'yi 3 saatte giden aracın saatteki hızı kaç?",
+        [_observation("CALCULATE", {"result": 63})],
+        "Aracın saatteki ortalama hızı 63 km.",
     ),
     (
         "Projede 'TODO' geçen yerleri bul.",

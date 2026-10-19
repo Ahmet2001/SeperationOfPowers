@@ -73,10 +73,11 @@ class RuntimeBackendTests(unittest.TestCase):
         messages = backend.calls[0][0]
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(
-            [m["role"] for m in messages[1:-1]], ["user", "assistant"] * 2
+            [m["role"] for m in messages[1:-1]], ["user", "assistant"] * 3
         )
         self.assertIn("ACTION:\nCODE_EXECUTE", messages[1]["content"])
         self.assertIn("ACTION:\nFILE_READ", messages[3]["content"])
+        self.assertIn("ACTION:\nFILE_READ", messages[5]["content"])
         prompt = messages[-1]["content"]
         self.assertIn("USER:\nmain.py dosyasını oku", prompt)
         self.assertIn("ACTION:\nFILE_READ", prompt)
