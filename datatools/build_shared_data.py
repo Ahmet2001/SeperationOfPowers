@@ -158,7 +158,9 @@ def yurutme_record(row: dict[str, Any], source: str, ctx: Context):
         results = ctx.calc_results.get(source_id)
         if not results or step >= len(results):
             raise Reject("calculate_unverified")
-        check_calculation(arguments["expression"], results[step], row["user_prompt"])
+        source_arguments = row.get("target_arguments") or {}
+        check_calculation(arguments["expression"], results[step], row["user_prompt"],
+                          operands_from_prompt="operation" in source_arguments)
     state = normalize_state(
         row.get("state"), ctx.aliases, step_index=step,
         turn_index=int(row.get("turn_index") or 0), query_for_step=ctx.query_lookup(source_id),

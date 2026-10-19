@@ -339,11 +339,19 @@ def check_numbers_against_results(response: str, results: Sequence[float], user_
     for token in _NUMBER.findall(response):
         if _significant_digits(token) < 5 or token in prompt_tokens:
             continue
-        value = float(token.replace(",", "."))
-        decimals = len(re.split(r"[.,]", token)[1]) if re.search(r"[.,]", token) else 0
-        tolerance = 0.5 * 10 ** (-decimals) + 1e-12
-        if not any(abs(value - float(r)) <= tolerance for r in results):
+        if not any(abs(value - float(r)) <= tolerance
+                   for value, tolerance in _readings(token) for r in results):
             raise Reject("response_number_mismatch")
+
+
+def _readings(token: str) -> list[tuple[float, float]]:
+    """(value, tolerance) for each way a number may be written: "0,91" and
+    "0.91" as decimals, "960.000" and "23,248" also as thousands groups."""
+    decimals = len(re.split(r"[.,]", token)[1]) if re.search(r"[.,]", token) else 0
+    readings = [(float(token.replace(",", ".")), 0.5 * 10 ** (-decimals) + 1e-12)]
+    if re.fullmatch(r"-?\d{1,3}(?:[.,]\d{3})+", token):
+        readings.append((float(re.sub(r"[.,]", "", token)), 0.5))
+    return readings
 
 
 # ------------------------------------------------------------- calculator
@@ -351,13 +359,17 @@ def check_numbers_against_results(response: str, results: Sequence[float], user_
 _DIGIT_PROMPT = re.compile(r"[\d.,\s+\-*/x×÷=?()]+")
 
 
-def check_calculation(expression: str, expected: Any, user_prompt: str) -> None:
-    """Recompute with the runtime CALCULATE; the source result must agree,
-    and a prompt written only in digits must contain every operand (§6)."""
-    if _DIGIT_PROMPT.fullmatch(user_prompt.strip()):
-        prompt_numbers = {float(n.replace(",", ".")) for n in _NUMBER.findall(user_prompt)}
-        for operand in _NUMBER.findall(expression):
-            if float(operand) not in prompt_numbers:
+def check_calculation(
+    expression: str, expected: Any, user_prompt: str, *, operands_from_prompt: bool = False
+) -> None:
+    """Recompute with the runtime CALCULATE; the source result must agree.
+    For calculator {operation, a, b} rows (``operands_from_prompt``) a prompt
+    written only in digits must contain both operands (§6); tool-math
+    expressions legitimately use intermediate results."""
+    if operands_from_prompt and _DIGIT_PROMPT.fullmatch(user_prompt.strip()):
+        prompt_numbers = {abs(float(n.replace(",", "."))) for n in _NUMBER.findall(user_prompt)}
+        for operand in re.findall(r"\d+(?:\.\d+)?(?:e[+-]?\d+)?", expression):
+            if abs(float(operand)) not in prompt_numbers:
                 raise Reject("calculate_operand_not_in_prompt")
     observation = execute_builtin_local("CALCULATE", {"expression": expression})
     if observation["status"] != "success":

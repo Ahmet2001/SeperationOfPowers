@@ -117,14 +117,19 @@ class ResponseTests(unittest.TestCase):
     def test_corrupted_numbers_are_rejected(self) -> None:
         check_numbers_against_results("Sonuç 0.9115370438628824'tür.", [0.9115370438628824], "")
         check_numbers_against_results("Yaklaşık 0,91 eder.", [0.9115370438628824], "")
+        check_numbers_against_results("960.000 dolar kazanıyor.", [960000], "")
+        check_numbers_against_results("Son toplam 23,248 $.", [23248.0], "")
         with self.assertRaises(Reject):
             check_numbers_against_results("Sonuç 1.183397668339766836'dır.", [1.1833976833976836], "")
 
     def test_calculations_are_recomputed(self) -> None:
         check_calculation("15*0.6", 9.0, "30 kutu alır, 1 alana 1 bedava.")
         with self.assertRaises(Reject) as caught:
-            check_calculation("22479418+867", 22480285, "2247918 + 867 = ?")
+            check_calculation("22479418+867", 22480285, "2247918 + 867 = ?", operands_from_prompt=True)
         self.assertEqual(caught.exception.reason, "calculate_operand_not_in_prompt")
+        check_calculation("577-66111", -65534, "577 - 66111 = ?", operands_from_prompt=True)
+        # tool-math uses intermediate results; only calculator rows are checked.
+        check_calculation("1001 * 1001", 1002001, "1000 2 + 1,001 2 + 1,002 2 = ?")
         with self.assertRaises(Reject) as caught:
             check_calculation("2+2", 5, "iki artı iki")
         self.assertEqual(caught.exception.reason, "calculate_result_mismatch")
