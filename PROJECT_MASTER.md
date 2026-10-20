@@ -2,7 +2,7 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.6  
+**Sürüm:** 0.7  
 **Tarih:** 2026-10-19  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
@@ -108,6 +108,7 @@ search_code     → FILE_SEARCH
 run_command     → SHELL_EXECUTE
 calc            → CALCULATE      (expression aynen)
 calculator      → CALCULATE      (operation/a/b → expression — §6)
+write_file      → FILE_CREATE    (koşullu, yalnız yeni dosya yazan adımlar — aşağıda)
 ```
 
 Örnek zorlanmaması gerekenler:
@@ -119,6 +120,8 @@ write_file           ≠ otomatik FILE_CREATE
 calculator family    ≠ otomatik CODE_EXECUTE
 calculate_bmi, calculate_loan_payment, ... ≠ otomatik CALCULATE  (alan formülleri; §6)
 ```
+
+**Koşullu alias — `write_file` → FILE_CREATE (Hunter TR, 0.7):** Araç mesajı yeni dosya / üzerine yazma ayrımı yapmaz ("Successfully wrote N characters to X"), ama her Hunter oturumu boş bir klasörde başlar (listelerde yalnız `session_state.json`). Bir `write_file` adımı FILE_CREATE sayılır: yolu o konuşmada daha önce yazılmamış, okunmamış veya listelenmemişse **ve** öncesinde hiç `run_command` çalışmamışsa (`npm create vite` gibi iskele komutları dosya yaratır, ajan sonra üzerine yazar). Ölçüm: 22,259 çağrının 11,066'sı FILE_CREATE; 11,013'ü bir komuttan sonra (belirsiz), 180'i kesin üzerine yazma. Diğerleri Yasama'da ontology dışı kalır; dosyanın tamamını değiştirdikleri için `old_text/new_text` FILE_EDIT'ine karşılık gelmezler. Eşleme adıma bağlıdır: hedefte, adım zincirinde ve observation'larda aynı adım için uygulanır (`datatools/normalize.py` → `new_file_write_steps`).
 
 Unmapped source action provenance için korunabilir; ancak canonical 17-class router eğitimine otomatik dahil edilmez.
 
@@ -213,7 +216,14 @@ Kaynak verideki farklı alan adları bu tabloya normalize edilir (`datatools/nor
 | CODE_EXECUTE | `language` yoksa `"python"` | `answer` (yalnız `null` ise; doluysa kayıt atılır) | ituperceptron |
 | CALCULATE | `{operation, a, b}` → `expression` (§6) | | arac_kullanimi |
 
-Dönüşümden sonra argümanlar registry şemasıyla doğrulanır; geçmeyen kayıt sebebiyle sayılır, zorlanmaz.
+Dönüşümden sonra argümanlar registry şemasıyla doğrulanır; geçmeyen kayıt sebebiyle sayılır, zorlanmaz. Eğitim verisinde FILE_CREATE `content` en fazla 7000 karakterdir (8k bağlam).
+
+**Açık araçlar (Yürütme ve Yargı, 0.7):** Hedef kullanım şirkete özel araçlardır: Yasama şirketin araç kümesine göre adapte edilir, Yürütme kendisine verilen *her* şemayı doldurur, Yargı dönen *her* sonucu özetler. Bu yüzden registry dışı kaynak araçları Yürütme ve Yargı verisinden atılmaz:
+
+- Yürütme: araç kaynak adıyla `ACTION` olur; kaynak şeması runtime'ın registry araçlarına verdiği biçime çevrilir: `{description, parameters, placeholder}`. Kabul edilen kaynak biçimleri OpenAI `{"type": "function", "function": {...}}` ve `{name, description, parameters}` (yanlış yerdeki üst düzey `required` `parameters`'a taşınır). Argümanlar o şemaya göre doğrulanır. Şeması olmayan kaynaklar (ituperceptron'un Jupyter dışı araçları, BTX24 mobil) şemayı argümandan çıkarmak hedefi sızdıracağı için alınmaz.
+- Yargı: observation kaynak araç adını korur; yalnız zarf normalize edilir (`tool_call_id` atılır, Hunter kabuğu açılır).
+- Yasama: 17 sınıflık ontology'de kalır.
+- Her rolde mesajları toplam 16,000 karakteri (~6–7.7k token) aşan kayıt atılır.
 
 Runtime'da Yürütme çıktısı doğrudan executor'a gönderilmez:
 
@@ -714,10 +724,10 @@ shared_data/
     └── test.*
 ```
 
-**v1 oluşturuldu, henüz ACTIVE değil** (§7'deki eksik sınıflar sentetik veriyle tamamlanıp örnekleme oranları belirlenene kadar):
+**Güncel sürüm v3, henüz ACTIVE değil** (§7'deki eksik sınıflar sentetik veriyle tamamlanıp örnekleme oranları belirlenene kadar):
 
 ```text
-/arf/scratch/egitimg16/nedolm_0p8b/tooluse_inspect/yasama-yurutme-yargi/shared_data/v1/
+/arf/scratch/egitimg16/nedolm_0p8b/tooluse_inspect/yasama-yurutme-yargi/shared_data/v3/
 ├── manifest.json              aşağıdaki alanlar + kaynak sha256, sayılar, ret sebepleri
 ├── contracts/tool_registry.json
 ├── rejects/<rol>.samples.jsonl  her ret sebebinden örnek
@@ -731,17 +741,18 @@ shared_data/
  ["error_observations"], "messages": [request turn(s)..., {"role": "assistant", "content": <target>}]}
 ```
 
-v1 sonucu (2026-10-20, kod `ccc45e23`, 11.5 dk):
+v3 sonucu (2026-10-20, kod `71ce9b03`, 12.8 dk; v1 = ilk build, v2 = + `write_file` koşullu alias, v3 = + açık araçlar ve uzunluk sınırı):
 
-| Rol | train | validation | test | Toplam |
-|---|---:|---:|---:|---:|
-| Yasama | 1,372,389 | 32,053 | 32,927 | 1,437,369 |
-| Yürütme | 750,540 | 18,526 | 19,169 | 788,235 |
-| Yargı | 643,985 | 13,930 | 14,123 | 672,038 |
+| Rol | train | validation | test | Toplam | v1 | v2 |
+|---|---:|---:|---:|---:|---:|---:|
+| Yasama | 1,385,491 | 32,439 | 33,438 | 1,451,368 | 1,437,369 | 1,451,368 |
+| Yürütme | 805,672 | 20,675 | 21,548 | 847,895 | 788,235 | 797,680 |
+| Yargı | 656,096 | 14,325 | 14,564 | 684,985 | 672,038 | 672,690 |
 
-- Yasama: FINISH 649,604 · WEB_SEARCH 554,292 · CALCULATE 121,717 · CODE_EXECUTE 107,107 · ASK_CLARIFICATION 1,675 · FILE_LIST 1,199 · SHELL_EXECUTE 513 · FILE_READ 337 · FILE_SEARCH 283 · FILE_DELETE 185 · FILE_EDIT 156 · FILE_CREATE 115 · FILE_MOVE 71 · RESPOND 60 · SEND_MAIL 28 · DOWNLOAD 20 · WEB_OPEN 7. Geçmişli 43.
-- Yürütme: WEB_SEARCH 554,604 · CALCULATE 123,038 · CODE_EXECUTE 107,708 · FILE_LIST 1,201 · SHELL_EXECUTE 513 · FILE_READ 336 · FILE_SEARCH 287 · FILE_DELETE 182 · FILE_EDIT 147 · FILE_CREATE 102 · FILE_MOVE 73 · SEND_MAIL 28 · DOWNLOAD 9 · WEB_OPEN 7.
-- Yargı: WEB_SEARCH 591,476 · CALCULATE 57,755 · CODE_EXECUTE 21,811 · dosya araçları ve karışık zincirler ~1k · hata observation'lı 33 · geçmişli 11.
+- Yasama: FINISH 650,459 · WEB_SEARCH 554,292 · CALCULATE 121,717 · CODE_EXECUTE 107,107 · FILE_CREATE 10,933 · FILE_LIST 2,204 · ASK_CLARIFICATION 1,675 · SHELL_EXECUTE 1,374 · FILE_READ 543 · FILE_EDIT 400 · FILE_SEARCH 293 · FILE_DELETE 185 · FILE_MOVE 71 · RESPOND 60 · SEND_MAIL 28 · DOWNLOAD 20 · WEB_OPEN 7. Geçmişli 43.
+- Yürütme: WEB_SEARCH 554,607 · CALCULATE 123,038 · CODE_EXECUTE 107,693 · **açık araç 46,632 (15,863 farklı araç; combined_v2 26,774, Hunter 10,674, glaive 9,184)** · FILE_CREATE 7,410 · SHELL_EXECUTE 3,229 · FILE_LIST 2,756 · FILE_EDIT 972 · FILE_READ 942 · FILE_SEARCH 317 · FILE_DELETE 182 · FILE_MOVE 73 · SEND_MAIL 28 · DOWNLOAD 9 · WEB_OPEN 7. Geçmişli 4,541.
+- Yargı: WEB_SEARCH 591,476 · CALCULATE 57,755 · CODE_EXECUTE 21,694 · **açık araç 12,375 (glaive 8,010, combined_v2 4,365)** · dosya araçları ve karışık zincirler ~1.7k · hata observation'lı 51 · geçmişli 4,546.
+- Yürütme açık araç retleri: şema yok 33,552 (ituperceptron, BTX24), argüman şemaya uymuyor ~1.1k (çoğu tip: object yerine str/list), liste biçimli şema 201 (bilalabic). Uzunluk sınırı: Yürütme 485, Yargı 253 kayıt; FILE_CREATE içerik sınırı 3,647.
 - Başlıca retler: tekrar (Yasama 82k, Yürütme 40k), ontology dışı action (glaive `calculate_*`, combined_v2 kaynak araçları, Hunter `write_file`), Hunter `write_file` içeren adım zinciri (`state_unmapped_action`: Yasama 7,001 — Hunter dosya kayıtlarının çoğu bu yüzden düşer), `web_result_unparsed` ~6k (URL'siz "1. Belge … Puan" arama biçimi), Yargı `boxed` 9,164 + yalnız artıktan oluşan cevap 5,372 + sayı bozulması 2,839, boş observation 10,685, calculator operand uyuşmazlığı 809.
 
 `messages` rollerin runtime'daki `request_message` / `request_messages` fonksiyonlarıyla üretilir (§4); system prompt ve few-shot turları eklenmez. Provenance alanları mesajlara girmez. Split: `combined_v2` kendi split'ini korur, diğerleri `md5(source:source_id)` ile (test %2, validation %2), böylece bir konuşmanın tüm adımları ve rolleri aynı split'te kalır. Aynı `messages` rol içinde bir kez yazılır.
@@ -932,7 +943,8 @@ Aşağıdaki konular henüz bu dosyada kesinleştirilmemiştir ve adım adım ka
 ```text
 - eğitimde kullanılacak role özel kısa system prompt (shared_data mesajlarında yok; runtime ile aynı olmalı)
 - §7'deki eksik sınıflar için sentetik veri üretimi
-- Hunter `write_file`: FILE_CREATE'e eşlenirse (yalnız yeni dosya yazan çağrılar) Hunter dosya/kabuk kayıtlarının çoğu geri gelir; şu an §2.1 gereği eşlenmiyor
+- şeması olmayan kaynaklar (ituperceptron Jupyter dışı ~20k, BTX24 mobil ~15k): şema yazılırsa Yürütme'ye açık araç olarak girer
+- Yasama'nın action listesini girdi olarak alması (şirket adaptasyonunu ucuzlatır; verideki `available_tools` gibi)
 - exact active source listesi
 - source balancing / sampling oranları
 - Yasama'nın fiziksel model/checkpoint standardı
@@ -991,6 +1003,13 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.7 — 2026-10-20
+
+- §2.1: `write_file` → FILE_CREATE koşullu alias (yalnız yeni dosya yazan Hunter adımları; ölçüm ve kural).
+- §2.2: Açık araçlar: Yürütme ve Yargı verisi registry dışı araçları kaynak şemasıyla tutar (hedef: şirkete özel araçlar). FILE_CREATE içeriği ≤ 7000 karakter; her rolde kayıt ≤ 16,000 karakter.
+- §9: shared_data v2 ve v3; güncel v3 sayıları (Yürütme 46,632 açık araç kaydı, 15,863 farklı araç).
+- §14: Hunter `write_file` kararı kapandı; şemasız kaynaklar ve Yasama'ya girdi olarak action listesi açık.
 
 ## 0.6 — 2026-10-20
 
