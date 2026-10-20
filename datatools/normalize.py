@@ -228,10 +228,15 @@ def normalize_observation(
     *,
     query: str | None = None,
     extra_aliases: Mapping[str, str] | None = None,
+    keep_unmapped: bool = False,
 ) -> dict[str, Any]:
+    """``keep_unmapped`` (Yurutme/Yargi, §2.2 open tools): a tool outside the
+    registry keeps its source name and data; only the envelope is normalized."""
     if not isinstance(observation, Mapping):
         raise Reject("observation_not_object")
     action = canonical_action(observation.get("action"), {**aliases, **(extra_aliases or {})})
+    if action is None and keep_unmapped and isinstance(observation.get("action"), str):
+        action = observation["action"]
     if action is None:
         raise Reject("observation_unmapped_action")
     if action in CONTROL_ACTIONS:
@@ -270,6 +275,7 @@ def normalize_state(
     turn_index: int,
     query_for_step: QueryLookup = lambda step: None,
     step_aliases: StepAliases = lambda step: {},
+    keep_unmapped: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(state, Mapping):
         state = {}
@@ -277,6 +283,8 @@ def normalize_state(
     for step, item in enumerate(state.get("completed_actions") or []):
         name = item.get("action") if isinstance(item, Mapping) else item
         action = canonical_action(name, {**aliases, **step_aliases(step)})
+        if action is None and keep_unmapped and isinstance(name, str):
+            action = name
         if action is None:
             raise Reject("state_unmapped_action")
         completed.append(action)
@@ -292,7 +300,8 @@ def normalize_state(
 
     def observe(step: int, obs: Any) -> dict[str, Any]:
         return normalize_observation(
-            obs, aliases, query=query_for_step(step), extra_aliases=step_aliases(step)
+            obs, aliases, query=query_for_step(step), extra_aliases=step_aliases(step),
+            keep_unmapped=keep_unmapped,
         )
 
     recent = [observe(step, obs) for step, obs in steps]
@@ -304,6 +313,54 @@ def normalize_state(
         "step_index": step_index,
         "turn_index": turn_index,
     }
+
+
+# ------------------------------------------------------------- open tools
+
+# Total characters of a record's messages. Serialized text measured 2.1-2.7
+# characters per Mercan token, so 16000 characters stay within ~6-7.7k tokens
+# of the 8k context; a longer record cannot be trained or served whole.
+MAX_RECORD_CHARS = 16000
+
+
+def open_tool_schema(tool_schema: Any, placeholder: Any = None) -> dict[str, Any]:
+    """A source tool outside the registry as Yurutme sees a registry tool:
+    ``{description, parameters, placeholder}`` (§2.2 open tools).
+
+    Accepts the OpenAI form ``{"type": "function", "function": {...}}`` and
+    ``{name, description, parameters}`` (with a misplaced top-level
+    ``required`` moved into ``parameters``).
+    """
+    if not isinstance(tool_schema, Mapping):
+        raise Reject("tool_schema_missing")
+    spec = tool_schema.get("function") if isinstance(tool_schema.get("function"), Mapping) else tool_schema
+    parameters = spec.get("parameters")
+    if not isinstance(parameters, Mapping) or not isinstance(parameters.get("properties"), Mapping):
+        raise Reject("tool_schema_unsupported")
+    parameters = {"type": "object", **dict(parameters)}
+    if "required" not in parameters and isinstance(spec.get("required"), list):
+        parameters["required"] = list(spec["required"])
+    if not isinstance(placeholder, Mapping):
+        placeholder = {key: None for key in parameters["properties"]}
+    return {
+        "description": str(spec.get("description") or ""),
+        "parameters": parameters,
+        "placeholder": dict(placeholder),
+    }
+
+
+def validate_open_arguments(name: str, arguments: Any, schema: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(arguments, Mapping):
+        raise Reject("arguments_not_object")
+    try:
+        return validate_tool_arguments(name, dict(arguments), schema)
+    except ValueError as exc:
+        raise Reject("open_schema:" + re.sub(r"^\S+ ", "", _short(str(exc)))) from exc
+
+
+def check_record_length(messages: Sequence[Mapping[str, str]]) -> None:
+    if sum(len(m["content"]) for m in messages) > MAX_RECORD_CHARS:
+        raise Reject("record_too_long")
 
 
 # ---------------------------------------------------- write_file -> FILE_CREATE

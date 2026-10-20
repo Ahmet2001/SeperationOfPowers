@@ -31,6 +31,7 @@ from datatools.normalize import (
     CONTROL_ACTIONS,
     WRITE_AS_CREATE,
     Reject,
+    check_record_length,
     canonical_action,
     check_calculation,
     check_numbers_against_results,
@@ -41,6 +42,8 @@ from datatools.normalize import (
     normalize_history,
     normalize_observation,
     normalize_state,
+    open_tool_schema,
+    validate_open_arguments,
 )
 from runtime.local_tools import BUILTIN_TOOL_REGISTRY
 from runtime.registry_export import CONTRACT_VERSION, REGISTRY_PATH
@@ -49,7 +52,7 @@ from yargi.yargi import request_messages as yargi_request_messages
 from yasama.yasama import request_message as yasama_request_message
 from yurutme.yurutme import request_message as yurutme_request_message
 
-DATASET_SCHEMA_VERSION = 1
+DATASET_SCHEMA_VERSION = 2  # 2: Yurutme/Yargi keep tools outside the registry
 ROLES = ("yasama", "yurutme", "yargi")
 SPLITS = ("train", "validation", "test")
 TEST_SHARE, VALIDATION_SHARE = 0.02, 0.02
@@ -166,40 +169,54 @@ def yasama_record(row: dict[str, Any], source: str, ctx: Context):
         yasama_request_message(user_prompt=row["user_prompt"], conversation_history=history, state=state),
         {"role": "assistant", "content": action},
     ]
+    check_record_length(messages)
     return action, messages, {"step_index": step, "has_history": bool(history)}
 
 
 def yurutme_record(row: dict[str, Any], source: str, ctx: Context):
+    """Registry tools as before; any other tool keeps its source name and its
+    own schema (§2.2 open tools): Yurutme fills whatever schema it is given."""
     source_id = str(row.get("source_id"))
     step = int(row.get("step_index") or 0)
     action = ctx.action(row.get("mapped_action"), source_id, step) or ctx.action(row.get("action"), source_id, step)
-    if action is None:
-        raise Reject("unmapped_action")
     if action in CONTROL_ACTIONS:
         raise Reject("not_a_tool_action")
-    arguments = normalize_arguments(action, row.get("target_arguments"))
-    if action == "CALCULATE":
-        results = ctx.calc_results.get(source_id)
-        if not results or step >= len(results):
-            raise Reject("calculate_unverified")
-        source_arguments = row.get("target_arguments") or {}
-        check_calculation(arguments["expression"], results[step], row["user_prompt"],
-                          operands_from_prompt="operation" in source_arguments)
+    meta: dict[str, Any] = {"step_index": step}
+    if action is None:
+        name = row.get("action")
+        if not isinstance(name, str) or not name:
+            raise Reject("unmapped_action")
+        tool_schema = open_tool_schema(row.get("tool_schema"), row.get("placeholder"))
+        arguments = validate_open_arguments(name, row.get("target_arguments"), tool_schema)
+        action, label, placeholder = name, "OPEN_TOOL", tool_schema["placeholder"]
+        meta["tool"] = name
+    else:
+        arguments = normalize_arguments(action, row.get("target_arguments"))
+        if action == "CALCULATE":
+            results = ctx.calc_results.get(source_id)
+            if not results or step >= len(results):
+                raise Reject("calculate_unverified")
+            source_arguments = row.get("target_arguments") or {}
+            check_calculation(arguments["expression"], results[step], row["user_prompt"],
+                              operands_from_prompt="operation" in source_arguments)
+        tool = BUILTIN_TOOL_REGISTRY[action]
+        tool_schema, label, placeholder = public_tool_schema(tool), action, tool.get("placeholder")
     state = normalize_state(
         row.get("state"), ctx.aliases, step_index=step,
         turn_index=int(row.get("turn_index") or 0), query_for_step=ctx.query_lookup(source_id),
-        step_aliases=ctx.step_aliases(source_id),
+        step_aliases=ctx.step_aliases(source_id), keep_unmapped=True,
     )
     history = normalize_history(row.get("conversation_history"))
-    tool = BUILTIN_TOOL_REGISTRY[action]
     messages = [
         yurutme_request_message(
             user_prompt=row["user_prompt"], conversation_history=history, state=state, action=action,
-            tool_schema=public_tool_schema(tool), placeholder=tool.get("placeholder"),
+            tool_schema=tool_schema, placeholder=placeholder,
         ),
         {"role": "assistant", "content": json.dumps(arguments, ensure_ascii=False)},
     ]
-    return action, messages, {"step_index": step, "has_history": bool(history)}
+    check_record_length(messages)
+    meta["has_history"] = bool(history)
+    return label, messages, meta
 
 
 def yargi_record(row: dict[str, Any], source: str, ctx: Context):
@@ -210,7 +227,7 @@ def yargi_record(row: dict[str, Any], source: str, ctx: Context):
     source_id = str(row.get("source_id"))
     observations = [
         normalize_observation(o, ctx.aliases, query=ctx.queries.get((source_id, index)),
-                              extra_aliases=ctx.step_aliases(source_id)(index))
+                              extra_aliases=ctx.step_aliases(source_id)(index), keep_unmapped=True)
         for index, o in enumerate(raw)
     ]
     response = clean_response(row.get("response"))
@@ -226,7 +243,9 @@ def yargi_record(row: dict[str, Any], source: str, ctx: Context):
         *yargi_request_messages(user_prompt=row["user_prompt"], conversation_history=history, observations=observations),
         {"role": "assistant", "content": response},
     ]
-    label = "+".join(sorted({o["action"] for o in observations}))
+    check_record_length(messages)
+    registry = set(BUILTIN_TOOL_REGISTRY)
+    label = "+".join(sorted({o["action"] if o["action"] in registry else "OPEN_TOOL" for o in observations}))
     errors = sum(o["status"] == "error" for o in observations)
     return label, messages, {"has_history": bool(history), "error_observations": errors}
 
@@ -270,6 +289,7 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
         (out / role).mkdir()
         writers = {split: gzip.open(out / role / f"{split}.jsonl.gz", "wt", encoding="utf-8") for split in SPLITS}
         seen: set[bytes] = set()
+        open_tools: set[str] = set()
         role_counts = defaultdict(lambda: defaultdict(Counter))      # split -> action -> source
         role_rejects = defaultdict(Counter)                           # source -> reason
         extra = Counter()
@@ -306,6 +326,8 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
                     role_counts[split][label][source] += 1
                     extra["history"] += meta.get("has_history", False)
                     extra["error_observations"] += bool(meta.get("error_observations"))
+                    if meta.get("tool"):
+                        open_tools.add(meta["tool"])
                 log(f"{role} {source} {path.name}: done")
         finally:
             for writer in writers.values():
@@ -322,6 +344,7 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
             },
             "with_history": extra["history"],
             "with_error_observation": extra["error_observations"],
+            "distinct_open_tools": len(open_tools),
         }
         rejects[role] = {source: dict(c.most_common()) for source, c in role_rejects.items()}
         with (out / "rejects" / f"{role}.samples.jsonl").open("w", encoding="utf-8") as handle:
