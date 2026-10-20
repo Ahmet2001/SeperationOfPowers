@@ -2,7 +2,7 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.5  
+**Sürüm:** 0.6  
 **Tarih:** 2026-10-19  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
@@ -196,7 +196,24 @@ Tek kaynak koddur: `runtime/local_tools.py` → `BUILTIN_TOOL_REGISTRY` ve Yasam
 | CODE_EXECUTE | **`language`**, **`code`** | |
 | SEND_MAIL | **`to`**, **`subject`**, **`body`** | `to` kullanıcının isteğinde açıkça geçmeli |
 
-Kaynak verideki farklı alan adları bu tabloya normalize edilir; örneğin Gemini distil verisinde FILE_SEARCH'in aranan metni `pattern` alanında, DOWNLOAD'ın hedefi `output_path` / `destination` alanındadır.
+Kaynak verideki farklı alan adları bu tabloya normalize edilir (`datatools/normalize.py` → `normalize_arguments`; ölçüm §7):
+
+| Action | Kaynak alanı → registry | Atılan | Kaynak |
+|---|---|---|---|
+| FILE_LIST | `dir_path`, `directory` → `path` | | Hunter |
+| FILE_READ | `file_path` → `path` | `limit`, `offset` (uzun dosya RAG ile okunur) | Hunter |
+| FILE_EDIT | `file_path` → `path` | | Hunter |
+| FILE_SEARCH | `pattern` (`query` yoksa) → `query`; `file_pattern` → `pattern`; `extension` → `pattern: "*.ext"` | | Gemini |
+| FILE_MOVE | `source_path` → `source`, `destination_path` → `destination` | | Gemini |
+| FILE_DELETE | tek elemanlı `paths` → `path` | | Gemini |
+| SEND_MAIL | `recipient` → `to`, `message` → `body` | | combined_v2 |
+| DOWNLOAD | `output_path`, `destination`, `target_directory` → `path` | | combined_v2, Gemini |
+| WEB_SEARCH | `q` → `query`; `num`, `limit` → `max_results` (≤ 3) | `related_keywords`, `country`, `lang`, `gl`, `lr`, `start` | combined_v2 |
+| SHELL_EXECUTE | | `timeout` | Hunter |
+| CODE_EXECUTE | `language` yoksa `"python"` | `answer` (yalnız `null` ise; doluysa kayıt atılır) | ituperceptron |
+| CALCULATE | `{operation, a, b}` → `expression` (§6) | | arac_kullanimi |
+
+Dönüşümden sonra argümanlar registry şemasıyla doğrulanır; geçmeyen kayıt sebebiyle sayılır, zorlanmaz.
 
 Runtime'da Yürütme çıktısı doğrudan executor'a gönderilmez:
 
@@ -301,7 +318,7 @@ FILE_READ    → {path, content}                                   (dosya ≤ 70
 FILE_READ    → {path, content, partial: true, query, matched, total_chars}   (uzun dosya / PDF)
 CALCULATE    → {result}                                          (number)
 FILE_SEARCH  → {query, matches: [{path, line, text}]}
-WEB_SEARCH   → {query, results: [{title, url, snippet}]}     (en fazla 3 sonuç)
+WEB_SEARCH   → {query, results: [{title?, url, snippet}]}    (en fazla 3 sonuç; `title` runtime'da var, veride yok)
 WEB_OPEN     → {url, title, text, truncated}
 ```
 
@@ -608,18 +625,38 @@ Raw/clean çalışma alanı ayrı dizindedir:
 
 Bu veri Yasama/Yürütme/Yargı için büyük web-search + calculator kaynağıdır.
 
-### Kapsam analizi (2026-10-19)
+### Kapsam analizi (2026-10-20, 17 action)
 
-Mevcut kaynakların canonical 16-class kapsamı. Sayılar `target_action` değerlerinden alınmıştır.
+Dört kaynağın (`arac_kullanimi` clean_yyy_v2, `combined_v2`, Gemini distil, Hunter TR) tam taraması; action adları §2.1 alias'larıyla kanonikleştirildi, normalizasyon öncesi sayılar. Yargı "temiz": boş observation, İngilizce cevap, `<answer>` ve `boxed` içermeyen kayıt.
 
-| Kaynak | Yasama satırı | Canonical olanlar | Not |
-|---|---|---|---|
-| `arac_kullanimi` (HF `toolcall.parquet`) | 1,412,575 | FINISH 678,666 · WEB_SEARCH 597,740 | 136k calculator `unmapped_preserved`; geçmişli kayıt %0,6 |
-| `combined_v2` (5 kaynak) | 182,123 | FINISH 27,145 · ASK_CLARIFICATION 1,468 · RESPOND 26 | 153k kayıt 16,545 farklı kaynak tool adında; `add_and_execute_jupyter_code_cell` 97k |
-| Gemini distil | 2,814 | 16 sınıfın hepsi; dosya işlemlerinin tek kaynağı | geçmişli kayıt %0 |
-| Hunter TR | 30,621 | SHELL_EXECUTE 3,110 · FILE_LIST 2,465 · FINISH 1,247 · FILE_EDIT 840 · FILE_READ 622 | `write_file` 22,274 korunmuş |
+| Action | Yasama | Yürütme | Yargı (temiz) | Not |
+|---|---:|---:|---:|---|
+| FINISH | 711,300 | – | – | 678k `arac_kullanimi` |
+| WEB_SEARCH | 599,282 | 599,282 | 591,884 | neredeyse tamamı `arac_kullanimi`; örnekleme ile dengelenmeli |
+| CALCULATE | 124,546 | 124,546 | 41,767 | §6 |
+| CODE_EXECUTE | 107,509 | 107,710 | 22 | ituperceptron Jupyter (pandas, `/home/user/input`); dar konu |
+| SHELL_EXECUTE | 3,245 | 3,245 | 468 | Hunter |
+| FILE_LIST | 2,778 | 1,600 | 1,017 | Hunter + Gemini |
+| ASK_CLARIFICATION | 1,676 | – | – | BTX24 mobil |
+| FILE_EDIT | 1,026 | 1,020 | 289 | |
+| FILE_READ | 977 | 975 | 463 | |
+| FILE_SEARCH | 365 | 365 | 336 | Gemini |
+| FILE_DELETE / FILE_CREATE / FILE_MOVE | 186 / 116 / 78 | aynı | 174 / 116 / 76 | yalnız Gemini |
+| RESPOND | **60** | – | 11 | |
+| SEND_MAIL / DOWNLOAD / WEB_OPEN | 29 / 20 / 7 | aynı | 27 / 8 / 7 | |
 
-Toplamda zayıf kalan sınıflar: **RESPOND** (~60 kayıt), **WEB_OPEN**, **DOWNLOAD**, **SEND_MAIL**, **CODE_EXECUTE** (Jupyter dışı), dosya işlemleri (Gemini dışında yok) ve **çok turlu** kayıtlar. Bunlar runtime serializer'larıyla üretilecek sentetik veriyle tamamlanmalıdır.
+- Çok turlu: Yasama'da geçmişli ~5.8k kayıt (çoğu FINISH), Yargı'da ~5k.
+- Hata observation'ı: Yargı'da toplam 56 kayıt. Model "araç hata verdi" demeyi bu veriden öğrenemez.
+- Yargı'da elenenler: `<answer>` 21,815 (ituperceptron), `boxed` 33,373 (`tool-math`), boş observation 10,685 (atasoglu), İngilizce cevap 519 (413'ü Hunter; Hunter Yargı'nın üçte biri).
+
+**Yeterlilik:** Yasama büyük dört sınıfta (FINISH, WEB_SEARCH, CALCULATE, CODE_EXECUTE) yeterli; diğer ~10 sınıf, RESPOND ve çok turlu kayıtlar sentetik veri ister. Yürütme WEB_SEARCH ve CALCULATE'te yeterli; dosya araçlarında yüzlerce örnek var; WEB_OPEN / DOWNLOAD / SEND_MAIL sentetiksiz olmaz. Yargı en zayıf rol: web araması ve hesap dışında; hata durumları, dosya araçları, FILE_READ RAG biçimi (`partial: true`, `[satır N]`) ve "araç yapılandırılmamış" observation'ı tamamen sentetik üretilmelidir.
+
+### Format uyumu (2026-10-20)
+
+- Observation dört alanı her kaynakta var; 734k observation'da fazladan `tool_call_id` (atılır).
+- STATE: `completed_actions` çoğunlukla ad listesi; 746 kayıtta obje (ada çevrilir); 236k eski kayıtta `recent_observations` yok (`[last_observation]` ile kurulur).
+- Yürütme argümanları registry'ye göre: WEB_SEARCH 599,277 / 599,282 uyumlu; CALCULATE 84,908 uyumlu + 39,636 dönüştürülebilir; CODE_EXECUTE 107,688 `{answer, code}`; Hunter `file_path` / `dir_path`; Gemini FILE_SEARCH `pattern`. Dönüşümler §2.2 tablosunda.
+- Yargı observation data'sı §3.1'e göre: CALCULATE 124,528 uyumlu. **WEB_SEARCH 597,730 kayıtta `{"result": "[1] url\nmetin\n\n[2] ..."}` tek metin** → `[n] url` bloklarından `results: [{url, snippet}]` ayrıştırılır, `query` aynı adımın Yürütme argümanından alınır. FILE_LIST / FILE_READ / FILE_SEARCH'te Hunter `{success, result, tool, source}` kabuğu ve Gemini `files` / `results` / `found_files` adları `entries` / `content` / `matches`'e çevrilir.
 
 Kaynak bazında kalite notları:
 
@@ -677,7 +714,37 @@ shared_data/
     └── test.*
 ```
 
-**Bu root henüz oluşturulmuş değildir.** Oluşturulana ve verifier ile ACTIVE ilan edilene kadar mevcut dataset parçaları source/provenance olarak değerlendirilmelidir.
+**v1 oluşturuldu, henüz ACTIVE değil** (§7'deki eksik sınıflar sentetik veriyle tamamlanıp örnekleme oranları belirlenene kadar):
+
+```text
+/arf/scratch/egitimg16/nedolm_0p8b/tooluse_inspect/yasama-yurutme-yargi/shared_data/v1/
+├── manifest.json              aşağıdaki alanlar + kaynak sha256, sayılar, ret sebepleri
+├── contracts/tool_registry.json
+├── rejects/<rol>.samples.jsonl  her ret sebebinden örnek
+└── yasama|yurutme|yargi/{train,validation,test}.jsonl.gz
+```
+
+Üretim: `python -m datatools.build_shared_data --root <tooluse_inspect> --out <shared_data/vN>` (SoP repo; TRUBA'da CPU `debug` kuyruğu, `apps/truba-ai/cpu-2024.0`). Kayıt:
+
+```text
+{"id", "source", "source_dataset", "split", "action", "step_index", "has_history",
+ ["error_observations"], "messages": [request turn(s)..., {"role": "assistant", "content": <target>}]}
+```
+
+v1 sonucu (2026-10-20, kod `ccc45e23`, 11.5 dk):
+
+| Rol | train | validation | test | Toplam |
+|---|---:|---:|---:|---:|
+| Yasama | 1,372,389 | 32,053 | 32,927 | 1,437,369 |
+| Yürütme | 750,540 | 18,526 | 19,169 | 788,235 |
+| Yargı | 643,985 | 13,930 | 14,123 | 672,038 |
+
+- Yasama: FINISH 649,604 · WEB_SEARCH 554,292 · CALCULATE 121,717 · CODE_EXECUTE 107,107 · ASK_CLARIFICATION 1,675 · FILE_LIST 1,199 · SHELL_EXECUTE 513 · FILE_READ 337 · FILE_SEARCH 283 · FILE_DELETE 185 · FILE_EDIT 156 · FILE_CREATE 115 · FILE_MOVE 71 · RESPOND 60 · SEND_MAIL 28 · DOWNLOAD 20 · WEB_OPEN 7. Geçmişli 43.
+- Yürütme: WEB_SEARCH 554,604 · CALCULATE 123,038 · CODE_EXECUTE 107,708 · FILE_LIST 1,201 · SHELL_EXECUTE 513 · FILE_READ 336 · FILE_SEARCH 287 · FILE_DELETE 182 · FILE_EDIT 147 · FILE_CREATE 102 · FILE_MOVE 73 · SEND_MAIL 28 · DOWNLOAD 9 · WEB_OPEN 7.
+- Yargı: WEB_SEARCH 591,476 · CALCULATE 57,755 · CODE_EXECUTE 21,811 · dosya araçları ve karışık zincirler ~1k · hata observation'lı 33 · geçmişli 11.
+- Başlıca retler: tekrar (Yasama 82k, Yürütme 40k), ontology dışı action (glaive `calculate_*`, combined_v2 kaynak araçları, Hunter `write_file`), Hunter `write_file` içeren adım zinciri (`state_unmapped_action`: Yasama 7,001 — Hunter dosya kayıtlarının çoğu bu yüzden düşer), `web_result_unparsed` ~6k (URL'siz "1. Belge … Puan" arama biçimi), Yargı `boxed` 9,164 + yalnız artıktan oluşan cevap 5,372 + sayı bozulması 2,839, boş observation 10,685, calculator operand uyuşmazlığı 809.
+
+`messages` rollerin runtime'daki `request_message` / `request_messages` fonksiyonlarıyla üretilir (§4); system prompt ve few-shot turları eklenmez. Provenance alanları mesajlara girmez. Split: `combined_v2` kendi split'ini korur, diğerleri `md5(source:source_id)` ile (test %2, validation %2), böylece bir konuşmanın tüm adımları ve rolleri aynı split'te kalır. Aynı `messages` rol içinde bir kez yazılır.
 
 `shared_data/manifest.json` gelecekte en az şunları sabitlemelidir:
 
@@ -863,7 +930,9 @@ Bir değişiklik yalnız tek modülde sessizce uygulanmamalıdır.
 Aşağıdaki konular henüz bu dosyada kesinleştirilmemiştir ve adım adım karara bağlanacaktır:
 
 ```text
-- shared_data/ fiziksel dosya formatı (JSONL.GZ / Parquet / ikisi)
+- eğitimde kullanılacak role özel kısa system prompt (shared_data mesajlarında yok; runtime ile aynı olmalı)
+- §7'deki eksik sınıflar için sentetik veri üretimi
+- Hunter `write_file`: FILE_CREATE'e eşlenirse (yalnız yeni dosya yazan çağrılar) Hunter dosya/kabuk kayıtlarının çoğu geri gelir; şu an §2.1 gereği eşlenmiyor
 - exact active source listesi
 - source balancing / sampling oranları
 - Yasama'nın fiziksel model/checkpoint standardı
@@ -922,6 +991,14 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.6 — 2026-10-20
+
+- §2.2: Kaynak argüman adlarının registry'ye dönüşüm tablosu (`datatools/normalize.py`).
+- §3.1: WEB_SEARCH `title` isteğe bağlı (veride yok).
+- §7: 17 action'lık rol kapsamı, format uyumu ve kalite bulguları (tam tarama).
+- §9: `shared_data/v1` üretildi (henüz ACTIVE değil): `datatools/build_shared_data.py`, kayıt biçimi, split ve tekrar politikası, v1 sayıları ve ret sebepleri. Mesajlar rollerin runtime request builder'larıyla üretilir; system prompt eklenmez.
+- §14: shared_data dosya biçimi (JSONL.GZ) kapandı; eğitim system prompt'u, sentetik veri ve Hunter `write_file` açık.
 
 ## 0.5 — 2026-10-19
 
