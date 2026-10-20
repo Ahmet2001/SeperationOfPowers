@@ -53,12 +53,14 @@ from yasama.yasama import request_message as yasama_request_message
 from datatools import synth
 from yurutme.yurutme import request_message as yurutme_request_message
 
-DATASET_SCHEMA_VERSION = 3  # 2: open tools; 3: teacher-free RESPOND and history mixing
+DATASET_SCHEMA_VERSION = 4  # 2: open tools; 3: teacher-free RESPOND and history mixing;
+                            # 4: Yargi RESPOND only from short dpo answers and HelpSteer3 validation
 ROLES = ("yasama", "yurutme", "yargi")
 SPLITS = ("train", "validation", "test")
 TEST_SHARE, VALIDATION_SHARE = 0.02, 0.02
 REJECT_SAMPLES = 5
-# Share of dpo chat requests used for RESPOND (~180k rows before filtering).
+# Share of dpo chat requests used for Yasama RESPOND (~180k rows before
+# filtering); Yargi uses synth.YARGI_DPO_RATE.
 DPO_RESPOND_RATE = 0.2
 # Earlier-turn pools for history mixing: sampling rates over the sources.
 CHAT_EXCHANGE_RATE, TOOL_EXCHANGE_RATE = 0.03, 0.006
@@ -81,6 +83,8 @@ def chat_paths(root: Path) -> dict[str, list[Path]]:
         "dpo": [dpo / "dpo.parquet"],
         "human_like": sorted((extra / "Human-Like-DPO-Dataset-TR" / "data").glob("train-*.parquet")),
         "helpsteer": sorted((extra / "helpsteer3-tr" / "preference").glob("train-*.parquet")),
+        # Held out of DPO training: the only chat answers Yargi has not seen.
+        "helpsteer_holdout": sorted((extra / "helpsteer3-tr" / "preference").glob("validation-*.parquet")),
     }
 
 
@@ -343,6 +347,7 @@ def chat_rows(root: Path, role: str, limit: int | None) -> Iterator[dict[str, An
         read_parquet_rows(paths["dpo"], limit),
         read_parquet_rows(paths["human_like"], limit),
         read_parquet_rows(paths["helpsteer"], limit),
+        read_parquet_rows(paths["helpsteer_holdout"], limit),
         dpo_rate=DPO_RESPOND_RATE,
     )
 

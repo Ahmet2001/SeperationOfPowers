@@ -4,10 +4,15 @@ from datatools.build_shared_data import Context, yargi_record, yasama_record
 from datatools.normalize import load_aliases
 from datatools.synth import (
     BIG_RATE,
+    DPO_DATASET,
+    HELPSTEER_DATASET,
+    HUMAN_LIKE_DATASET,
+    MAX_YARGI_RESPOND_ANSWER,
     chat_respond_rows,
     exchange,
     helpsteer_chat,
     history_rate,
+    holdout_split,
     needs_tool,
     with_history,
 )
@@ -45,18 +50,36 @@ class ChatSourceTests(unittest.TestCase):
         dpo = iter([{"prompt": "Kahve mi çay mı daha sağlıklı?", "chosen": "<think>x</think>İkisinin de faydaları var."},
                     {"prompt": "250 / 5 kaç?", "chosen": "50"}])
         human = iter([{"prompt": "Karaoke sever misin?", "chosen": "Bayılırım!"}])
-        yasama = list(chat_respond_rows("yasama", dpo, human, iter([]), dpo_rate=1.0))
+        yasama = list(chat_respond_rows("yasama", dpo, human, iter([]), iter([]), dpo_rate=1.0))
         self.assertEqual([r["user_prompt"] for r in yasama], ["Kahve mi çay mı daha sağlıklı?", "Karaoke sever misin?"])
+        self.assertEqual([r["source_dataset"] for r in yasama], [DPO_DATASET, HUMAN_LIKE_DATASET])
         label, messages, _ = yasama_record(yasama[0], "chat_respond", CTX)
         self.assertEqual((label, messages[-1]["content"]), ("RESPOND", "RESPOND"))
 
         dpo = iter([{"prompt": "Kahve mi çay mı daha sağlıklı?", "chosen": "<think>x</think>İkisinin de faydaları var."}])
-        yargi = list(chat_respond_rows("yargi", dpo, iter([{"prompt": "a", "chosen": "b"}]), iter([]), dpo_rate=1.0))
+        yargi = list(chat_respond_rows("yargi", dpo, iter([{"prompt": "a", "chosen": "b"}]), iter([]), iter([]),
+                                       dpo_rate=1.0, yargi_dpo_rate=1.0))
         self.assertEqual(len(yargi), 1)  # Human-Like answers are not used for Yargi
+        self.assertEqual(yargi[0]["_split"], "train")
         label, messages, _ = yargi_record(yargi[0], "chat_respond", CTX)
         self.assertEqual(label, "RESPOND")
         self.assertIn("<tool_observations>\n[]\n</tool_observations>", messages[0]["content"])
         self.assertEqual(messages[-1]["content"], "İkisinin de faydaları var.")
+
+    def test_yargi_skips_answers_seen_in_dpo_training(self) -> None:
+        helpsteer = {"domain": "general", "context": [{"role": "user", "content": "Şiir nedir?"}],
+                     "response1": "Duyguların ölçülü dili.", "response2": "x", "overall_preference": -2}
+        long_dpo = {"prompt": "Roma nasıl kuruldu?", "chosen": "a" * (MAX_YARGI_RESPOND_ANSWER + 1)}
+        yargi = list(chat_respond_rows("yargi", iter([long_dpo]), iter([]), iter([helpsteer]), iter([]),
+                                       dpo_rate=1.0, yargi_dpo_rate=1.0))
+        self.assertEqual(yargi, [])  # long dpo answers and HelpSteer3 train answers are left out
+        holdout = list(chat_respond_rows("yargi", iter([]), iter([]), iter([]), iter([helpsteer] * 40), dpo_rate=1.0))
+        self.assertEqual({r["source_dataset"] for r in holdout}, {HELPSTEER_DATASET})
+        self.assertEqual({r["_split"] for r in holdout}, {"train", "validation", "test"})
+        self.assertEqual({r["_split"] for r in holdout}, {holdout_split(r["source_id"]) for r in holdout})
+        # Yasama still learns RESPOND from HelpSteer3 train requests.
+        yasama = list(chat_respond_rows("yasama", iter([]), iter([]), iter([helpsteer]), iter([]), dpo_rate=1.0))
+        self.assertEqual([r["user_prompt"] for r in yasama], ["Şiir nedir?"])
 
 
 class HistoryMixTests(unittest.TestCase):

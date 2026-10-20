@@ -50,15 +50,17 @@ def _strip_thinking(text: str) -> str:
 
 def respond_rows(
     source_id: str, prompt: str, answer: str | None, history: Sequence[Mapping[str, str]] = (),
+    *, source_dataset: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Yasama (and, with an answer, Yargi) rows for a request with no tool."""
     rows = {"yasama": {
-        "source_id": source_id, "step_index": 0, "user_prompt": prompt,
+        "source_id": source_id, "source_dataset": source_dataset, "step_index": 0, "user_prompt": prompt,
         "conversation_history": list(history), "state": dict(EMPTY_STATE), "target_action": "RESPOND",
     }}
     if answer:
         rows["yargi"] = {
-            "source_id": source_id, "user_prompt": prompt, "conversation_history": list(history),
+            "source_id": source_id, "source_dataset": source_dataset, "user_prompt": prompt,
+            "conversation_history": list(history),
             "observations": [], "response": _strip_thinking(answer), "respond": True,
         }
     return rows
@@ -127,29 +129,62 @@ def with_history(row: Mapping[str, Any], earlier: Sequence[Mapping[str, str]]) -
     return mixed
 
 
+DPO_DATASET = "erenfazlioglu/turkish-instruct-reasoning-dpo-3.4m"
+HUMAN_LIKE_DATASET = "Human-Like-DPO-Dataset-TR"
+HELPSTEER_DATASET = "yusufbaykaloglu/helpsteer3-tr"
+
+# The Mercan DPO model was trained on dpo.parquet, HelpSteer3 train and
+# Human-Like (continuation_dpo_v1). Yasama only takes their requests with a
+# new label, so all of them are used. Yargi would be fine-tuned again on
+# answers the model was already pushed towards, so it gets a few thousand
+# short ones (train only) to learn the empty-observation format, and its
+# RESPOND evaluation comes from HelpSteer3 validation, which DPO held out.
+YARGI_DPO_RATE = 0.03
+MAX_YARGI_RESPOND_ANSWER = 1200
+HOLDOUT_SPLITS = ((0.5, "train"), (0.75, "validation"), (1.0, "test"))
+
+
+def holdout_split(source_id: str) -> str:
+    share = stable_share("holdout", source_id)
+    return next(split for bound, split in HOLDOUT_SPLITS if share < bound)
+
+
 def chat_respond_rows(
     role: str, dpo_rows: Iterator[Mapping[str, Any]], human_like_rows: Iterator[Mapping[str, Any]],
-    helpsteer_rows: Iterator[Mapping[str, Any]], *, dpo_rate: float,
+    helpsteer_rows: Iterator[Mapping[str, Any]], helpsteer_holdout_rows: Iterator[Mapping[str, Any]], *,
+    dpo_rate: float, yargi_dpo_rate: float = YARGI_DPO_RATE,
 ) -> Iterator[dict[str, Any]]:
-    """RESPOND rows for one role from the three chat sources.
+    """RESPOND rows for one role from the chat sources (see above).
 
     Human-Like-DPO answers claim personal experiences, so only its requests
-    are used (Yasama routing); dpo and HelpSteer3 also give Yargi answers.
+    are used. Rows with a fixed split carry it in ``_split``.
     """
-    for index, row in enumerate(dpo_rows):
-        chat = dpo_chat(row)
-        if chat and not needs_tool(chat[0]) and stable_share("dpo", index) < dpo_rate:
-            rows = respond_rows(f"dpo-{index}", chat[0], chat[1])
-            if role in rows:
-                yield rows[role]
     if role == "yasama":
+        for index, row in enumerate(dpo_rows):
+            chat = dpo_chat(row)
+            if chat and not needs_tool(chat[0]) and stable_share("dpo", index) < dpo_rate:
+                yield respond_rows(f"dpo-{index}", chat[0], None, source_dataset=DPO_DATASET)["yasama"]
         for index, row in enumerate(human_like_rows):
             chat = dpo_chat(row)
             if chat and not needs_tool(chat[0]):
-                yield respond_rows(f"humanlike-{index}", chat[0], None)["yasama"]
-    for index, row in enumerate(helpsteer_rows):
+                yield respond_rows(f"humanlike-{index}", chat[0], None, source_dataset=HUMAN_LIKE_DATASET)["yasama"]
+        for index, row in enumerate(helpsteer_rows):
+            chat = helpsteer_chat(row)
+            if chat and not needs_tool(chat[1]):
+                yield respond_rows(f"helpsteer-{index}", chat[1], None, chat[0],
+                                   source_dataset=HELPSTEER_DATASET)["yasama"]
+        return
+    if role != "yargi":
+        return
+    for index, row in enumerate(dpo_rows):
+        chat = dpo_chat(row)
+        if (chat and not needs_tool(chat[0]) and stable_share("dpo-yargi", index) < yargi_dpo_rate
+                and len(_strip_thinking(chat[1])) <= MAX_YARGI_RESPOND_ANSWER):
+            record = respond_rows(f"dpo-{index}", chat[0], chat[1], source_dataset=DPO_DATASET)["yargi"]
+            yield {**record, "_split": "train"}
+    for index, row in enumerate(helpsteer_holdout_rows):
         chat = helpsteer_chat(row)
         if chat and not needs_tool(chat[1]):
-            rows = respond_rows(f"helpsteer-{index}", chat[1], chat[2], chat[0])
-            if role in rows:
-                yield rows[role]
+            source_id = f"helpsteer-validation-{index}"
+            record = respond_rows(source_id, chat[1], chat[2], chat[0], source_dataset=HELPSTEER_DATASET)["yargi"]
+            yield {**record, "_split": holdout_split(source_id)}
