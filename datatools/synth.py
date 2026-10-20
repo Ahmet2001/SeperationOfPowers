@@ -139,7 +139,7 @@ HELPSTEER_DATASET = "yusufbaykaloglu/helpsteer3-tr"
 # answers the model was already pushed towards, so it gets a few thousand
 # short ones (train only) to learn the empty-observation format, and its
 # RESPOND evaluation comes from HelpSteer3 validation, which DPO held out.
-YARGI_DPO_RATE = 0.03
+YARGI_DPO_RATE = 0.08  # ~2.6k short answers after filtering
 MAX_YARGI_RESPOND_ANSWER = 1200
 HOLDOUT_SPLITS = ((0.5, "train"), (0.75, "validation"), (1.0, "test"))
 
