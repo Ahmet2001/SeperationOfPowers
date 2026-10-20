@@ -29,12 +29,14 @@ from typing import Any
 
 from datatools.normalize import (
     CONTROL_ACTIONS,
+    WRITE_AS_CREATE,
     Reject,
     canonical_action,
     check_calculation,
     check_numbers_against_results,
     clean_response,
     load_aliases,
+    new_file_write_steps,
     normalize_arguments,
     normalize_history,
     normalize_observation,
@@ -113,27 +115,49 @@ def collect_calc_results(root: Path, limit: int | None) -> dict[str, list[Any]]:
     return results
 
 
+def collect_new_file_writes(root: Path, limit: int | None) -> set[tuple[str, int]]:
+    """Hunter TR (source_id, step) whose write_file is a FILE_CREATE (§2.1)."""
+    arguments = {}
+    for row in read_rows(sources(root, "yurutme")[-1][1], limit):
+        arguments[(str(row.get("source_id")), int(row.get("step_index") or 0))] = (
+            row.get("action"), row.get("target_arguments") or {},
+        )
+    episodes = (
+        (str(row.get("source_id")), row.get("observations") or [])
+        for row in read_rows(sources(root, "yargi")[-1][1], limit)
+    )
+    return new_file_write_steps(arguments, episodes)
+
+
 # ------------------------------------------------------------- records
 
 class Context:
-    def __init__(self, aliases, queries, calc_results):
+    def __init__(self, aliases, queries, calc_results, new_writes):
         self.aliases = aliases
         self.queries = queries
         self.calc_results = calc_results
+        self.new_writes = new_writes
 
     def query_lookup(self, source_id: str):
         return lambda step: self.queries.get((source_id, step))
 
+    def step_aliases(self, source_id: str):
+        return lambda step: WRITE_AS_CREATE if (source_id, step) in self.new_writes else {}
+
+    def action(self, name, source_id: str, step: int):
+        return canonical_action(name, {**self.aliases, **self.step_aliases(source_id)(step)})
+
 
 def yasama_record(row: dict[str, Any], source: str, ctx: Context):
-    action = canonical_action(row.get("target_action"), ctx.aliases)
-    if action is None:
-        raise Reject("unmapped_action")
     source_id = str(row.get("source_id"))
     step = int(row.get("step_index") or 0)
+    action = ctx.action(row.get("target_action"), source_id, step)
+    if action is None:
+        raise Reject("unmapped_action")
     state = normalize_state(
         row.get("state"), ctx.aliases, step_index=step,
         turn_index=int(row.get("turn_index") or 0), query_for_step=ctx.query_lookup(source_id),
+        step_aliases=ctx.step_aliases(source_id),
     )
     if action == "FINISH" and not state["recent_observations"]:
         raise Reject("finish_without_observation")
@@ -146,14 +170,14 @@ def yasama_record(row: dict[str, Any], source: str, ctx: Context):
 
 
 def yurutme_record(row: dict[str, Any], source: str, ctx: Context):
-    action = canonical_action(row.get("mapped_action"), ctx.aliases) or canonical_action(row.get("action"), ctx.aliases)
+    source_id = str(row.get("source_id"))
+    step = int(row.get("step_index") or 0)
+    action = ctx.action(row.get("mapped_action"), source_id, step) or ctx.action(row.get("action"), source_id, step)
     if action is None:
         raise Reject("unmapped_action")
     if action in CONTROL_ACTIONS:
         raise Reject("not_a_tool_action")
     arguments = normalize_arguments(action, row.get("target_arguments"))
-    source_id = str(row.get("source_id"))
-    step = int(row.get("step_index") or 0)
     if action == "CALCULATE":
         results = ctx.calc_results.get(source_id)
         if not results or step >= len(results):
@@ -164,6 +188,7 @@ def yurutme_record(row: dict[str, Any], source: str, ctx: Context):
     state = normalize_state(
         row.get("state"), ctx.aliases, step_index=step,
         turn_index=int(row.get("turn_index") or 0), query_for_step=ctx.query_lookup(source_id),
+        step_aliases=ctx.step_aliases(source_id),
     )
     history = normalize_history(row.get("conversation_history"))
     tool = BUILTIN_TOOL_REGISTRY[action]
@@ -184,7 +209,8 @@ def yargi_record(row: dict[str, Any], source: str, ctx: Context):
         raise Reject("empty_observations")
     source_id = str(row.get("source_id"))
     observations = [
-        normalize_observation(o, ctx.aliases, query=ctx.queries.get((source_id, index)))
+        normalize_observation(o, ctx.aliases, query=ctx.queries.get((source_id, index)),
+                              extra_aliases=ctx.step_aliases(source_id)(index))
         for index, o in enumerate(raw)
     ]
     response = clean_response(row.get("response"))
@@ -228,7 +254,9 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
     log(f"web queries: {len(queries)}")
     calc_results = collect_calc_results(root, limit)
     log(f"calculator episodes: {len(calc_results)}")
-    ctx = Context(aliases, queries, calc_results)
+    new_writes = collect_new_file_writes(root, limit)
+    log(f"write_file as FILE_CREATE: {len(new_writes)}")
+    ctx = Context(aliases, queries, calc_results, new_writes)
 
     if out.exists():
         raise SystemExit(f"{out} exists; pick a new --version or remove it")

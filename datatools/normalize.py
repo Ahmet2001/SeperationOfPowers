@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from pathlib import PurePosixPath
 from typing import Any
 
-from runtime.local_tools import BUILTIN_TOOL_REGISTRY, execute_builtin_local
+from runtime.local_tools import BUILTIN_TOOL_REGISTRY, READ_CHAR_BUDGET, execute_builtin_local
 from runtime.tool_validation import validate_tool_arguments
 from yasama.yasama import ACTION_ORDER, CONTROL_ACTION_DESCRIPTIONS
 
@@ -62,6 +63,7 @@ def canonical_action(name: Any, aliases: Mapping[str, str]) -> str | None:
 # --------------------------------------------------------------- arguments
 
 ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
+    "FILE_CREATE": {"file_path": "path"},
     "FILE_LIST": {"dir_path": "path", "directory": "path"},
     "FILE_READ": {"file_path": "path"},
     "FILE_EDIT": {"file_path": "path"},
@@ -78,6 +80,9 @@ ARGUMENT_DROPS: dict[str, frozenset[str]] = {
     "SHELL_EXECUTE": frozenset({"timeout"}),
     "WEB_SEARCH": frozenset({"related_keywords", "country", "lang", "gl", "lr", "start"}),
 }
+# A FILE_CREATE target longer than this cannot fit the 8k context next to its
+# prompt; the same budget as a whole-file FILE_READ.
+MAX_CREATE_CONTENT = READ_CHAR_BUDGET
 CALCULATOR_OPERATORS = {"add": "+", "subtract": "-", "multiply": "*", "divide": "/"}
 MAX_WEB_RESULTS = 3
 
@@ -133,6 +138,9 @@ def normalize_arguments(action: str, arguments: Any) -> dict[str, Any]:
             args["max_results"] = max(1, min(int(args["max_results"]), MAX_WEB_RESULTS))
         except (TypeError, ValueError):
             args.pop("max_results")
+    if action == "FILE_CREATE" and isinstance(args.get("content"), str) \
+            and len(args["content"]) > MAX_CREATE_CONTENT:
+        raise Reject("file_create_content_too_long")
     tool = BUILTIN_TOOL_REGISTRY.get(action)
     if tool is None:
         raise Reject("not_a_tool_action")
@@ -215,11 +223,15 @@ def normalize_data(action: str, data: Any, *, query: str | None = None) -> dict[
 
 
 def normalize_observation(
-    observation: Any, aliases: Mapping[str, str], *, query: str | None = None
+    observation: Any,
+    aliases: Mapping[str, str],
+    *,
+    query: str | None = None,
+    extra_aliases: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(observation, Mapping):
         raise Reject("observation_not_object")
-    action = canonical_action(observation.get("action"), aliases)
+    action = canonical_action(observation.get("action"), {**aliases, **(extra_aliases or {})})
     if action is None:
         raise Reject("observation_unmapped_action")
     if action in CONTROL_ACTIONS:
@@ -246,6 +258,8 @@ def normalize_observation(
 
 
 QueryLookup = Callable[[int], "str | None"]
+# Aliases that hold only at one step of an episode (write_file -> FILE_CREATE).
+StepAliases = Callable[[int], Mapping[str, str]]
 
 
 def normalize_state(
@@ -255,28 +269,34 @@ def normalize_state(
     step_index: int,
     turn_index: int,
     query_for_step: QueryLookup = lambda step: None,
+    step_aliases: StepAliases = lambda step: {},
 ) -> dict[str, Any]:
     if not isinstance(state, Mapping):
         state = {}
     completed = []
-    for item in state.get("completed_actions") or []:
+    for step, item in enumerate(state.get("completed_actions") or []):
         name = item.get("action") if isinstance(item, Mapping) else item
-        action = canonical_action(name, aliases)
+        action = canonical_action(name, {**aliases, **step_aliases(step)})
         if action is None:
             raise Reject("state_unmapped_action")
         completed.append(action)
     recent_source = state.get("recent_observations")
     last_source = state.get("last_observation")
+    # Observation i belongs to step i; the last one to the last completed step.
+    last_step = len(completed) - 1 if completed else len(recent_source or [last_source]) - 1
     if recent_source is None:
         # Older sources keep only the last observation.
-        recent_source = [last_source] if last_source else []
-    recent = [
-        normalize_observation(obs, aliases, query=query_for_step(index))
-        for index, obs in enumerate(recent_source)
-    ]
-    last = None
-    if last_source:
-        last = normalize_observation(last_source, aliases, query=query_for_step(len(recent_source) - 1))
+        steps = [(last_step, last_source)] if last_source else []
+    else:
+        steps = list(enumerate(recent_source))
+
+    def observe(step: int, obs: Any) -> dict[str, Any]:
+        return normalize_observation(
+            obs, aliases, query=query_for_step(step), extra_aliases=step_aliases(step)
+        )
+
+    recent = [observe(step, obs) for step, obs in steps]
+    last = observe(last_step, last_source) if last_source else None
     return {
         "completed_actions": completed,
         "last_observation": last,
@@ -284,6 +304,62 @@ def normalize_state(
         "step_index": step_index,
         "turn_index": turn_index,
     }
+
+
+# ---------------------------------------------------- write_file -> FILE_CREATE
+
+WRITE_AS_CREATE = {"write_file": "FILE_CREATE"}
+
+
+def _path(value: Any) -> str:
+    text = re.sub(r"^\./", "", str(value or "").strip())
+    return str(PurePosixPath(text)) if text else ""
+
+
+def new_file_write_steps(
+    arguments_by_step: Mapping[tuple[str, int], tuple[str, Mapping[str, Any]]],
+    episodes: Iterable[tuple[str, Sequence[Any]]],
+) -> set[tuple[str, int]]:
+    """Hunter TR steps whose write_file created a new file (§2.1).
+
+    Every Hunter session starts in an empty directory (listings show only
+    session_state.json) and the tool message never says new or overwrite.
+    A write counts as FILE_CREATE when its path was not written, read or
+    listed earlier in the episode and no run_command ran before it (a
+    scaffolder such as `npm create vite` makes files the agent then rewrites).
+    """
+    created: set[tuple[str, int]] = set()
+    for source_id, observations in episodes:
+        written: set[str] = set()
+        read: set[str] = set()
+        listed: dict[str, set[str]] = {}
+        ran_command = False
+        for step, observation in enumerate(observations):
+            if not isinstance(observation, Mapping):
+                continue
+            action = observation.get("action")
+            known = arguments_by_step.get((source_id, step))
+            arguments = known[1] if known and known[0] == action else {}
+            data = observation.get("data")
+            result = data.get("result") if isinstance(data, Mapping) else None
+            if action == "list_directory":
+                directory = _path(arguments.get("dir_path") or arguments.get("path") or ".")
+                names = listed.setdefault(directory, set())
+                for entry in result if isinstance(result, list) else []:
+                    names.add(_path(_SIZE_SUFFIX.sub("", str(entry)).rstrip("/")))
+            elif action == "read_file":
+                read.add(_path(arguments.get("file_path") or arguments.get("path")))
+            elif action == "run_command":
+                ran_command = True
+            elif action == "write_file":
+                path = _path(arguments.get("file_path") or arguments.get("path"))
+                parent = str(PurePosixPath(path).parent) if path else "."
+                seen_in_listing = bool(listed.get(parent, set()) & {path, PurePosixPath(path).name})
+                if path and not ran_command and path not in written and path not in read \
+                        and not seen_in_listing:
+                    created.add((source_id, step))
+                written.add(path)
+    return created
 
 
 def normalize_history(history: Any) -> list[dict[str, str]]:

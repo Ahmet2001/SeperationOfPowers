@@ -2,12 +2,15 @@ import json
 import unittest
 
 from datatools.normalize import (
+    MAX_CREATE_CONTENT,
+    WRITE_AS_CREATE,
     Reject,
     calculator_expression,
     check_calculation,
     check_numbers_against_results,
     clean_response,
     load_aliases,
+    new_file_write_steps,
     normalize_arguments,
     normalize_observation,
     normalize_state,
@@ -102,6 +105,53 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(state["completed_actions"], ["CALCULATE"])
         self.assertEqual(state["recent_observations"], [state["last_observation"]])
         self.assertEqual(state["last_observation"]["data"], {"result": 12})
+
+
+def _wrote(path):
+    return {"action": "write_file", "data": {"success": True, "result": f"Successfully wrote 9 characters to {path}",
+                                             "tool": "write_file", "source": "builtin"}, "status": "success", "error": None}
+
+
+class WriteFileTests(unittest.TestCase):
+    def test_only_writes_of_new_files_become_file_create(self) -> None:
+        listing = {"action": "list_directory", "data": {"success": True, "result": ["session_state.json (964 bytes)"],
+                                                        "tool": "list_directory", "source": "builtin"},
+                   "status": "success", "error": None}
+        read = {"action": "read_file", "data": {"success": True, "result": "x", "tool": "read_file", "source": "builtin"},
+                "status": "success", "error": None}
+        command = {"action": "run_command", "data": {"success": True, "result": "ok", "tool": "run_command",
+                                                     "source": "builtin"}, "status": "success", "error": None}
+        arguments = {
+            ("e1", 0): ("list_directory", {"dir_path": "."}),
+            ("e1", 1): ("write_file", {"file_path": "index.html", "content": "a"}),
+            ("e1", 2): ("write_file", {"file_path": "./index.html", "content": "b"}),
+            ("e1", 3): ("read_file", {"file_path": "app.js"}),
+            ("e1", 4): ("write_file", {"file_path": "app.js", "content": "c"}),
+            ("e1", 5): ("write_file", {"file_path": "css/site.css", "content": "d"}),
+            ("e1", 6): ("run_command", {"command": "npm create vite@latest app"}),
+            ("e1", 7): ("write_file", {"file_path": "app/src/App.jsx", "content": "e"}),
+        }
+        episodes = [("e1", [listing, _wrote("index.html"), _wrote("index.html"), read, _wrote("app.js"),
+                            _wrote("css/site.css"), command, _wrote("app/src/App.jsx")])]
+        self.assertEqual(new_file_write_steps(arguments, episodes), {("e1", 1), ("e1", 5)})
+
+    def test_state_maps_write_file_only_at_created_steps(self) -> None:
+        obs = _wrote("index.html")
+        state = normalize_state({"completed_actions": ["list_directory", "write_file"], "last_observation": obs},
+                                ALIASES, step_index=2, turn_index=0,
+                                step_aliases=lambda step: WRITE_AS_CREATE if step == 1 else {})
+        self.assertEqual(state["completed_actions"], ["FILE_LIST", "FILE_CREATE"])
+        self.assertEqual(state["last_observation"]["action"], "FILE_CREATE")
+        with self.assertRaises(Reject):
+            normalize_state({"completed_actions": ["write_file"], "last_observation": obs},
+                            ALIASES, step_index=1, turn_index=0)
+
+    def test_file_create_arguments_and_length_cap(self) -> None:
+        self.assertEqual(normalize_arguments("FILE_CREATE", {"file_path": "a.md", "content": "x"}),
+                         {"path": "a.md", "content": "x"})
+        with self.assertRaises(Reject) as caught:
+            normalize_arguments("FILE_CREATE", {"file_path": "a.html", "content": "x" * (MAX_CREATE_CONTENT + 1)})
+        self.assertEqual(caught.exception.reason, "file_create_content_too_long")
 
 
 class ResponseTests(unittest.TestCase):
