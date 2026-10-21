@@ -97,6 +97,24 @@ YASAMA_SYSTEM_PROMPT = _YASAMA_PROMPT_TEMPLATE.replace(
     "{action_names}", ", ".join(ACTION_ORDER)
 ).replace("{action_descriptions}", _action_descriptions())
 
+# The prompt a fine-tuned Yasama sees, in training data and at runtime
+# (prompt_style "trained"): the action list comes from the same registry, so
+# adapting Yasama to a company's tools changes this list and the data alike.
+TRAINED_SYSTEM_PROMPT = f"""Sen Mercan'ın Yasama modelisin. Kullanıcının mevcut isteğine, konuşma geçmişine ve STATE'e bakarak bir sonraki adımı seçersin.
+Çıktın yalnızca aşağıdaki action adlarından biridir. Argüman, açıklama, JSON veya kullanıcıya cevap yazma.
+
+{_action_descriptions()}
+Kurallar:
+- USER mevcut istektir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki turun action'ını tekrarlama.
+- Araç gerekmeyen sohbet ve bilgi isteklerinde RESPOND seç.
+- FINISH yalnızca bu turda çalışan araçların sonuçları (STATE.recent_observations) isteği karşılıyorsa seçilir.
+- Araç için zorunlu bir bilgi eksikse ASK_CLARIFICATION seç; eksik bilgiyi uydurma."""
+
+
+def system_message(*, trained: bool = True) -> dict[str, str]:
+    return {"role": "system", "content": TRAINED_SYSTEM_PROMPT if trained else YASAMA_SYSTEM_PROMPT}
+
+
 _EMPTY_STATE: dict[str, Any] = {
     "completed_actions": [],
     "last_observation": None,
@@ -234,11 +252,14 @@ class YasamaRuntime:
         *,
         backend: ChatBackend | None = None,
         generation_config: GenerationConfig | None = None,
+        trained: bool = False,
     ) -> None:
         if inference_fn is not None and backend is not None:
             raise ValueError("Configure either inference_fn or backend, not both.")
         self._inference_fn = inference_fn
         self._backend = backend
+        # A fine-tuned checkpoint gets its training prompt and no few-shot turns.
+        self._trained = trained
         self._generation_config = generation_config or GenerationConfig(
             max_tokens=16,
             temperature=0.0,
@@ -268,8 +289,8 @@ class YasamaRuntime:
 
         if self._backend is not None:
             messages = [
-                {"role": "system", "content": YASAMA_SYSTEM_PROMPT},
-                *_few_shot_messages(),
+                system_message(trained=self._trained),
+                *([] if self._trained else _few_shot_messages()),
                 request_message(
                     user_prompt=payload["user_prompt"],
                     conversation_history=payload["conversation_history"],

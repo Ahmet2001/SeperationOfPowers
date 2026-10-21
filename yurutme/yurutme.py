@@ -24,6 +24,21 @@ PLACEHOLDER yalnızca beklenen alanların iskeletidir. Kullanıcı isteği daha 
 TOOL_SCHEMA / STATE / ACTION / USER / CONVERSATION_HISTORY anahtarlarını sonuç JSON'una kopyalama.
 """
 
+# The prompt a fine-tuned Yurutme sees, in training data and at runtime
+# (prompt_style "trained"). It names no tool: the schema in the request is
+# the whole contract, so the same model fills a company's own tools.
+TRAINED_SYSTEM_PROMPT = """Sen Mercan'ın Yürütme modelisin. Yasama'nın seçtiği ACTION için TOOL_SCHEMA'ya uyan argüman JSON'unu üretirsin.
+- Yalnızca tek bir JSON nesnesi yaz; açıklama veya markdown ekleme.
+- Değerleri USER isteğinden ve STATE'teki araç sonuçlarından al; istekte olmayan bir değeri uydurma.
+- Zorunlu alanların hepsini doldur; şemada olmayan alan ekleme.
+- PLACEHOLDER yalnızca alanların iskeletidir; değerlerini kopyalama.
+- CONVERSATION_HISTORY yalnızca bağlamdır; önceki isteğin argümanlarını tekrarlama."""
+
+
+def system_message(*, trained: bool = True) -> dict[str, str]:
+    return {"role": "system", "content": TRAINED_SYSTEM_PROMPT if trained else YURUTME_SYSTEM_PROMPT}
+
+
 # Shown as prior user/assistant turns built from the built-in tool schemas.
 # Each request gets the examples for its own action plus one contrasting
 # action, which keeps the prompt near 1.6k tokens; inline system-prompt
@@ -178,11 +193,14 @@ class YurutmeRuntime:
         *,
         backend: ChatBackend | None = None,
         generation_config: GenerationConfig | None = None,
+        trained: bool = False,
     ) -> None:
         if inference_fn is not None and backend is not None:
             raise ValueError("Configure either inference_fn or backend, not both.")
         self._inference_fn = inference_fn
         self._backend = backend
+        # A fine-tuned checkpoint gets its training prompt and no few-shot turns.
+        self._trained = trained
         self._generation_config = generation_config or GenerationConfig(
             max_tokens=512,
             temperature=0.0,
@@ -240,8 +258,8 @@ class YurutmeRuntime:
 
         if self._backend is not None:
             messages = [
-                {"role": "system", "content": YURUTME_SYSTEM_PROMPT},
-                *_few_shot_messages(payload["action"]),
+                system_message(trained=self._trained),
+                *([] if self._trained else _few_shot_messages(payload["action"])),
                 request_message(
                     user_prompt=payload["user_prompt"],
                     conversation_history=payload["conversation_history"],

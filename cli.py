@@ -195,6 +195,21 @@ def _build_backend(role: str, config: Mapping[str, Any]):
     )
 
 
+PROMPT_STYLES = ("few_shot", "trained")
+
+
+def _trained_prompt(role: str, config: Mapping[str, Any]) -> bool:
+    """roles.<role>.prompt_style: "trained" for a checkpoint fine-tuned on
+    shared_data (its training system prompt, no few-shot turns); "few_shot"
+    (default) for a general checkpoint."""
+    style = str(config.get("prompt_style", "few_shot")).strip().lower()
+    if style not in PROMPT_STYLES:
+        raise ValueError(
+            f"roles.{role}.prompt_style must be one of: {', '.join(PROMPT_STYLES)}."
+        )
+    return style == "trained"
+
+
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
 
@@ -266,9 +281,10 @@ def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
         raise ValueError("Config must contain a roles object.")
 
     backends = {role: _build_backend(role, roles.get(role, {})) for role in ROLE_NAMES}
-    yasama = YasamaRuntime(backend=backends["yasama"])
-    yurutme = YurutmeRuntime(backend=backends["yurutme"])
-    yargi = YargiRuntime(backend=backends["yargi"])
+    trained = {role: _trained_prompt(role, roles.get(role, {})) for role in ROLE_NAMES}
+    yasama = YasamaRuntime(backend=backends["yasama"], trained=trained["yasama"])
+    yurutme = YurutmeRuntime(backend=backends["yurutme"], trained=trained["yurutme"])
+    yargi = YargiRuntime(backend=backends["yargi"], trained=trained["yargi"])
 
     pipeline_cfg = config.get("pipeline", {})
     if not isinstance(pipeline_cfg, Mapping):

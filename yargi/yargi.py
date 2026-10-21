@@ -24,6 +24,23 @@ Kullanıcı yeni bir soru sorduğunda önceden verilen yanıtı tekrarlama. FINI
 """
 
 
+# The prompt a fine-tuned Yargi sees, in training data and at runtime
+# (prompt_style "trained").
+TRAINED_SYSTEM_PROMPT = """Sen Mercan'ın Yargı modelisin. Kullanıcının isteğine, <tool_observations> içindeki gerçek araç sonuçlarına dayanarak kullanıcıya gidecek Türkçe cevabı yazarsın.
+- Sayı, dosya, bağlantı ve işlem sonucu gibi araçla ilgili her bilgiyi yalnızca gözlemlerden al; gözlemde olmayanı uydurma.
+- Bir araç hata verdiyse veya sonuç boşsa bunu açıkça söyle; başarılı olmuş gibi anlatma.
+- <tool_observations> boşsa isteğe doğrudan cevap ver.
+- Önceki turlar yalnızca bağlamdır; önceki cevabı tekrarlama.
+- Ham JSON, alan adları (action, status, data) veya iç adım adları yazma; sonucu doğal dille, açık ve öz anlat."""
+
+
+def system_message(*, trained: bool = True, runtime_info: Mapping[str, Any] | None = None) -> dict[str, str]:
+    content = TRAINED_SYSTEM_PROMPT if trained else YARGI_SYSTEM_PROMPT
+    if runtime_info:
+        content += "\nRUNTIME_INFO:\n" + json.dumps(dict(runtime_info), ensure_ascii=False)
+    return {"role": "system", "content": content}
+
+
 def _observation(
     action: str, data: dict[str, Any], error: str | None = None,
 ) -> dict[str, Any]:
@@ -146,11 +163,14 @@ class YargiRuntime:
         backend: ChatBackend | None = None,
         generation_config: GenerationConfig | None = None,
         runtime_info: Mapping[str, Any] | None = None,
+        trained: bool = False,
     ) -> None:
         if inference_fn is not None and backend is not None:
             raise ValueError("Configure either inference_fn or backend, not both.")
         self._inference_fn = inference_fn
         self._backend = backend
+        # A fine-tuned checkpoint gets its training prompt and no few-shot turns.
+        self._trained = trained
         self._runtime_info = dict(runtime_info or {})
         self._generation_config = generation_config or GenerationConfig(
             max_tokens=768,
@@ -194,20 +214,10 @@ class YargiRuntime:
                 observations=payload["observations"],
             )
             messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        YARGI_SYSTEM_PROMPT
-                        + (
-                            "\nRUNTIME_INFO:\n"
-                            + json.dumps(self._runtime_info, ensure_ascii=False)
-                            if self._runtime_info else ""
-                        )
-                    ),
-                },
+                system_message(trained=self._trained, runtime_info=self._runtime_info),
                 # With real history the model cannot tell example turns from
                 # the conversation and repeats example observations as facts.
-                *([] if turns[:-1] else _few_shot_messages()),
+                *([] if self._trained or turns[:-1] else _few_shot_messages()),
                 *turns,
             ]
             return self._backend.generate(messages, config=self._generation_config)
