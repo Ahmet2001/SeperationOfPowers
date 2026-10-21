@@ -97,18 +97,46 @@ YASAMA_SYSTEM_PROMPT = _YASAMA_PROMPT_TEMPLATE.replace(
     "{action_names}", ", ".join(ACTION_ORDER)
 ).replace("{action_descriptions}", _action_descriptions())
 
-# The prompt a fine-tuned Yasama sees, in training data and at runtime
-# (prompt_style "trained"): the action list comes from the same registry, so
-# adapting Yasama to a company's tools changes this list and the data alike.
-TRAINED_SYSTEM_PROMPT = f"""Sen Mercan'ın Yasama modelisin. Kullanıcının mevcut isteğine, konuşma geçmişine ve STATE'e bakarak bir sonraki adımı seçersin.
-Çıktın yalnızca aşağıdaki action adlarından biridir. Argüman, açıklama, JSON veya kullanıcıya cevap yazma.
+# One line per action: when Yasama picks it. The registry descriptions are
+# written for Yurutme (argument hints such as '*.py' patterns) and made the
+# trained prompt ~825 tokens, sent on every step; a company's own tools get
+# a line here when Yasama is adapted to them.
+ACTION_SUMMARIES = {
+    "RESPOND": "araç gerekmeyen sohbet ve bilgi istekleri",
+    "WEB_SEARCH": "internette arama",
+    "WEB_OPEN": "adresi verilen bir web sayfasını açma",
+    "FILE_READ": "adı bilinen bir dosyayı okuma",
+    "FILE_SEARCH": "dosyaların içinde metin arama",
+    "FILE_LIST": "klasördeki dosyaları listeleme",
+    "CALCULATE": "matematik hesabı",
+    "FILE_CREATE": "yeni dosya oluşturma",
+    "FILE_EDIT": "var olan dosyada metin değiştirme",
+    "FILE_DELETE": "dosya silme (yalnızca açıkça istenirse)",
+    "FILE_MOVE": "dosya taşıma veya adını değiştirme",
+    "CODE_EXECUTE": "kod parçası çalıştırma",
+    "SHELL_EXECUTE": "terminal komutu çalıştırma",
+    "DOWNLOAD": "bir adresteki dosyayı indirme",
+    "SEND_MAIL": "e-posta gönderme",
+    "ASK_CLARIFICATION": "araç için zorunlu bir bilgi eksik",
+    "FINISH": "bu turda çalışan araçların sonuçları isteği karşılıyor",
+}
+assert tuple(ACTION_SUMMARIES) == ACTION_ORDER
 
-{_action_descriptions()}
-Kurallar:
-- USER mevcut istektir. CONVERSATION_HISTORY yalnızca bağlamdır; önceki turun action'ını tekrarlama.
-- Araç gerekmeyen sohbet ve bilgi isteklerinde RESPOND seç.
-- FINISH yalnızca bu turda çalışan araçların sonuçları (STATE.recent_observations) isteği karşılıyorsa seçilir.
-- Araç için zorunlu bir bilgi eksikse ASK_CLARIFICATION seç; eksik bilgiyi uydurma."""
+# The prompt a fine-tuned Yasama sees, in training data and at runtime
+# (prompt_style "trained"). Adapting Yasama to a company's tools changes
+# this list and the data alike.
+TRAINED_SYSTEM_PROMPT = "\n".join([
+    "Sen Mercan'ın Yasama modelisin. Kullanıcının isteğine, konuşma geçmişine ve STATE'e bakıp "
+    "bir sonraki action'ı seçersin. Yalnızca action adını yaz.",
+    "",
+    "Action'lar:",
+    *(f"- {action}: {summary}" for action, summary in ACTION_SUMMARIES.items()),
+    "",
+    "Kurallar:",
+    "- USER mevcut istektir; CONVERSATION_HISTORY yalnızca bağlamdır, önceki turun action'ını tekrarlama.",
+    "- FINISH yalnızca bu turdaki araç sonuçları (STATE.recent_observations) isteği karşılıyorsa seçilir.",
+    "- Zorunlu bilgi eksikse ASK_CLARIFICATION seç; eksik bilgiyi uydurma.",
+])
 
 
 def system_message(*, trained: bool = True) -> dict[str, str]:

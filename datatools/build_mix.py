@@ -10,7 +10,8 @@ mix keeps every record of the small classes, filters the big strata for
 quality and takes a deterministic sample of them (lowest md5 of the record
 id), so a rebuild picks the same records. Each record gets its role's
 training system prompt, the one the runtime sends with prompt_style
-"trained", as the first message.
+"trained", as the first message. Records longer than the training length
+in NDSRF004 tokens are left out (--max-tokens, --vocab).
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from yargi.yargi import system_message as yargi_system_message
 from yasama.yasama import system_message as yasama_system_message
 from yurutme.yurutme import system_message as yurutme_system_message
 
-MIX_VERSION = 1
+MIX_VERSION = 2  # 2: short Yasama prompt, 8192-token limit
 ROLES = ("yasama", "yurutme", "yargi")
 SPLITS = ("train", "validation", "test")
 SYSTEM_MESSAGES = {
@@ -153,6 +154,42 @@ def sample_key(record: dict[str, Any]) -> str:
     return hashlib.md5(f"mix{MIX_VERSION}:{record['id']}".encode()).hexdigest()
 
 
+# ---------------------------------------------------------------- length
+
+MAX_TOKENS = 8192
+TOKENIZER_SHA256 = "72412d981dac65a29d1767bc98821fc2bcffc2de53c534e7c719598515bfb600"
+_CHAT_ROLES = {"system": "sistem", "user": "kullanici", "assistant": "asistan"}
+
+
+class TokenLength:
+    """Record length as the trainer serializes it (nedolm.chat_format):
+    per message <|mesaj_basla|> + "rol\n" + content + <|mesaj_bitir|> + "\n",
+    plus EOS after the target. Needs the NedoTokenizer package (Python 3.11+,
+    e.g. inside the training container)."""
+
+    def __init__(self, vocab: Path, max_tokens: int = MAX_TOKENS):
+        from nedotokenizer import SurfaceTokenizer
+
+        raw = vocab.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != TOKENIZER_SHA256:
+            raise ValueError(f"{vocab} is not the NDSRF004 vocabulary")
+        self._tokenizer = SurfaceTokenizer(raw)
+        self.max_tokens = max_tokens
+
+    def _encode(self, text: str) -> int:
+        return len(self._tokenizer.encode_ids(text.encode("utf-8")))
+
+    def __call__(self, record: dict[str, Any]) -> bool:
+        """True when the record does not fit."""
+        messages = record["messages"]
+        # Every token covers at least one byte, so most records need no encoding.
+        if sum(len(m["content"].encode("utf-8")) + 16 for m in messages) + 1 <= self.max_tokens:
+            return False
+        tokens = 1 + sum(2 + self._encode(_CHAT_ROLES[m["role"]] + "\n") + self._encode(m["content"])
+                         + self._encode("\n") for m in messages)
+        return tokens > self.max_tokens
+
+
 # ----------------------------------------------------------------- build
 
 def read_records(path: Path) -> Iterator[dict[str, Any]]:
@@ -161,7 +198,8 @@ def read_records(path: Path) -> Iterator[dict[str, Any]]:
             yield json.loads(line)
 
 
-def select(role: str, split: str, records: Callable[[], Iterator[dict[str, Any]]]):
+def select(role: str, split: str, records: Callable[[], Iterator[dict[str, Any]]],
+           too_long: Callable[[dict[str, Any]], bool] | None = None):
     """Pass 1 keeps the lowest sample keys per capped stratum; pass 2 writes
     in source order. Returns (chosen ids, stratum counts before/after, rejects)."""
     heaps: dict[str, list[tuple[int, str]]] = defaultdict(list)
@@ -169,6 +207,9 @@ def select(role: str, split: str, records: Callable[[], Iterator[dict[str, Any]]
     rejected: Counter = Counter()
     keep_all: set[str] = set()
     for record in records():
+        if too_long is not None and too_long({**record, "messages": [SYSTEM_MESSAGES[role], *record["messages"]]}):
+            rejected["over_max_tokens"] += 1
+            continue
         name = stratum(role, record)
         if name is None:
             rejected[record["action"] + "/" + record["source"]] += 1
@@ -193,7 +234,8 @@ def select(role: str, split: str, records: Callable[[], Iterator[dict[str, Any]]
     return chosen, seen, kept, rejected
 
 
-def build(shared: Path, out: Path, log: Callable[[str], None]) -> dict[str, Any]:
+def build(shared: Path, out: Path, log: Callable[[str], None],
+          too_long: Callable[[dict[str, Any]], bool] | None = None) -> dict[str, Any]:
     shared_manifest = shared / "manifest.json"
     counts: dict[str, Any] = {}
     for role in ROLES:
@@ -201,7 +243,7 @@ def build(shared: Path, out: Path, log: Callable[[str], None]) -> dict[str, Any]
         counts[role] = {}
         for split in SPLITS:
             path = shared / role / f"{split}.jsonl.gz"
-            chosen, seen, kept, rejected = select(role, split, lambda: read_records(path))
+            chosen, seen, kept, rejected = select(role, split, lambda: read_records(path), too_long)
             system = SYSTEM_MESSAGES[role]
             actions: Counter = Counter()
             with gzip.open(out / role / f"{split}.jsonl.gz", "wt", encoding="utf-8") as writer:
@@ -226,6 +268,8 @@ def build(shared: Path, out: Path, log: Callable[[str], None]) -> dict[str, Any]
         if shared_manifest.exists() else None,
         "caps": {f"{role}:{name}": cap for (role, name), cap in CAPS.items()},
         "eval_cap_share": EVAL_CAP_SHARE,
+        "max_tokens": getattr(too_long, "max_tokens", None),
+        "tokenizer_sha256": TOKENIZER_SHA256 if too_long is not None else None,
         "system_prompts": {role: {"sha256": hashlib.sha256(m["content"].encode()).hexdigest(),
                                   "chars": len(m["content"])} for role, m in SYSTEM_MESSAGES.items()},
         "counts": counts,
@@ -236,13 +280,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--shared", required=True, type=Path, help="shared_data/<version> directory")
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--vocab", type=Path, help="NDSRF004 surface-vocab.bin; required unless --max-tokens 0")
+    parser.add_argument("--max-tokens", type=int, default=MAX_TOKENS, help="training length; 0 keeps every record")
     parser.add_argument("--code-revision", help="SoP commit, when running from an archive without .git")
     args = parser.parse_args(argv)
+    if args.max_tokens and args.vocab is None:
+        parser.error("--vocab is required to apply --max-tokens")
+    too_long = TokenLength(args.vocab, args.max_tokens) if args.max_tokens else None
 
     def log(message: str) -> None:
         print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
 
-    manifest = build(args.shared, args.out, log)
+    manifest = build(args.shared, args.out, log, too_long)
     manifest["code_revision"] = args.code_revision
     (args.out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return 0

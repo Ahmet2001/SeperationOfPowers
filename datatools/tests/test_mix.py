@@ -85,6 +85,20 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(record["messages"][0], build_mix.SYSTEM_MESSAGES["yasama"])
             self.assertEqual([m["role"] for m in record["messages"]], ["system", "user", "assistant"])
 
+            # Records over the training length never reach a stratum; the
+            # check sees them with the system prompt the trainer adds.
+            seen = []
+
+            def too_long(candidate):
+                seen.append(candidate["messages"][0]["role"])
+                return candidate["id"] == "hunter_tr:100"
+
+            result = build_mix.build(shared, out, lambda _: None, too_long)
+            counts = result["counts"]["yasama"]["train"]
+            self.assertEqual(counts["by_action"]["FILE_LIST"], 2)
+            self.assertEqual(counts["quality_rejects"]["over_max_tokens"], 1)
+            self.assertEqual(set(seen), {"system"})
+
 
 if __name__ == "__main__":
     unittest.main()
