@@ -8,6 +8,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
+# 4 rows x 8192 tokens peak at ~75 GiB: H100 (80 GB) is too tight.
+#SBATCH -C H200
 #SBATCH --time=1-00:00:00
 set -euo pipefail
 : "${ROLE:?}" "${RUN_DIR:?}" "${CODE:?}" "${MIX:?}"

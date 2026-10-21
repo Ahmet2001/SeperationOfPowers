@@ -379,7 +379,7 @@ def train(args) -> None:
                 if not torch.isfinite(loss):
                     raise RuntimeError(f"non-finite loss at step {step}")
                 loss.backward()
-                loss_total += float(loss)
+                loss_total += float(loss.detach())
                 tokens_seen += raw.numel()
             grad_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0))
             optimizer.step()
