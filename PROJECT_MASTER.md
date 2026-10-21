@@ -2,7 +2,7 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.8  
+**Sürüm:** 0.9  
 **Tarih:** 2026-10-21  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
@@ -467,6 +467,14 @@ Yargı'nın konuşma geçmişi user mesajına JSON olarak gömülmez; son 6 mesa
 
 Yasama'nın konuşma geçmişi (v0.3): `CONVERSATION_HISTORY` bloğu yalnız turun **ilk adımında** (henüz tool çalışmamışken, `completed_actions` boş) verilir; "aynısını tests için de yap" gibi istekler bu adımda çözülür. Bir tool çalıştıktan sonraki adımlarda Yasama yalnız USER + adım zinciri (STATE) görür; karar artık "mevcut istek bitti mi" sorusudur ve önceki turlar yalnız eski action'ların kopyalanmasına yol açar. Yürütme her adımda geçmişi görmeye devam eder.
 
+
+## Eğitim system prompt'u (0.9)
+
+Her rolün eğitim ve runtime'da **aynı** system prompt'u vardır: `yasama.TRAINED_SYSTEM_PROMPT`, `yurutme.TRAINED_SYSTEM_PROMPT`, `yargi.TRAINED_SYSTEM_PROMPT` (`system_message()`). Eğitim karışımı (§9.1) her kaydın başına bunu koyar; runtime bunu `roles.<rol>.prompt_style: "trained"` ile gönderir ve few-shot turlarını eklemez. Varsayılan `"few_shot"`, eğitilmemiş genel checkpoint'ler içindir (eski uzun prompt + örnek turlar). Prompt değişirse mix yeniden üretilir ve model yeniden eğitilir; manifest prompt'un sha256'sını tutar.
+
+- Yasama (~2.9k karakter): görev, çıktı biçimi, registry açıklamalarından üretilen 17 action listesi ve dört karar kuralı (USER birincil, araçsız istek RESPOND, FINISH yalnız bu turun sonuçları isteği karşılıyorsa, eksik zorunlu bilgide ASK_CLARIFICATION). Action listesi registry'den geldiği için şirket adaptasyonunda liste ve veri birlikte değişir.
+- Yürütme (~500 karakter): hiçbir araç adı geçmez; sözleşme istekteki TOOL_SCHEMA'dır, böylece aynı model şirket araçlarını da doldurur.
+- Yargı (~600 karakter): gözleme dayanma, hata ve boş sonucu açıkça söyleme, boş gözlemde doğrudan cevap, ham JSON / iç ad yazmama. `RUNTIME_INFO` runtime'da ayarlıysa sona eklenir; eğitim verisinde yoktur (teacher'lı adımda yetenek soruları için eklenebilir).
 ---
 
 # 5. ChatML / Assistant Span Kuralı
@@ -784,6 +792,37 @@ v3 sonucu (2026-10-20, kod `71ce9b03`, 12.8 dk; v1 = ilk build, v2 = + `write_fi
 
 `messages` rollerin runtime'daki `request_message` / `request_messages` fonksiyonlarıyla üretilir (§4); system prompt ve few-shot turları eklenmez. Provenance alanları mesajlara girmez. Split: `combined_v2` kendi split'ini korur, diğerleri `md5(source:source_id)` ile (test %2, validation %2), böylece bir konuşmanın tüm adımları ve rolleri aynı split'te kalır. Aynı `messages` rol içinde bir kez yazılır.
 
+## 9.1 Eğitim karışımı (`mix/`, 0.9)
+
+shared_data sözleşmeye uyan her kaydı tutar; eğitim için `datatools/build_mix.py` bir karışım üretir:
+
+```text
+python -m datatools.build_mix --shared shared_data/v5 --out mix/v1
+mix/v1/<rol>/{train,validation,test}.jsonl.gz   kayıt = shared_data kaydı, messages[0] = rolün system mesajı
+mix/v1/manifest.json                            katman başına mevcut/alınan, kalite retleri, cap'ler, prompt sha256
+```
+
+- Küçük sınıflar ve diğer kaynaklar **bütün** alınır. Büyük katmanlar önce kalite filtresinden geçer, sonra kayıt id'sinin md5'ine göre en küçük N tanesi alınır (deterministik; yeniden üretimde aynı kayıtlar).
+- Kalite filtreleri: ms-marco isteği 20–200 karakter, büyük harf / rakamla başlayan ve soru biçiminde ("?" veya soru sözcüğü / eki) olmalı ("ms bir nörodejeneratif hastalık" gibi anahtar kelime parçaları düşer); aynı epizotların FINISH kayıtlarına da uygulanır. Yargı web cevabı 30–800 karakter, cümle sonu noktalamalı ve içerik sözcüklerinin (5 harflik kök) en az yarısı arama sonuçlarında geçmeli.
+- Validation / test katmanları train cap'inin %5'i ile sınırlanır (eval, kaynak çarpıklığını değil karışımı ölçer).
+
+mix/v1 (2026-10-21, kod `14d7a8c0`, shared_data v5):
+
+| Rol | train | validation | test | Cap'li katmanlar (alınan / filtre sonrası mevcut) |
+|---|---:|---:|---:|---|
+| Yasama | 193,670 | 8,349 | 8,420 | ms-marco WEB_SEARCH 40k / 226k · FINISH web sonrası 25k / 226k, hesap sonrası 15k / 71k, kod sonrası 8k / 20k · CALCULATE 30k / 117k · CODE_EXECUTE 10k / 97k · sohbet RESPOND 40k / 51k |
+| Yürütme | 120,218 | 5,250 | 5,412 | ms-marco WEB_SEARCH 15k / 226k (sorgu %99.6 isteğin kopyası) · CALCULATE 30k / 118k · CODE_EXECUTE 10k / 97k |
+| Yargı | 81,374 | 3,780 | 3,856 | ms-marco WEB_SEARCH 30k / 179k · CALCULATE 20k / 55k · CODE_EXECUTE 10k / 20k |
+
+- Kalite filtresi ms-marco isteklerinin %57'sini, Yargı web cevaplarının %68'ini eler.
+- Yasama train: FINISH 49,710 · WEB_SEARCH 43,624 · RESPOND 40,056 · CALCULATE 30,278 · FILE_CREATE 10,224 · CODE_EXECUTE 10,095 · diğer 13 sınıf ~9.7k. Yürütme train: açık araç 44,685 (tamamı) · CALCULATE 30,000 · WEB_SEARCH 18,626 · CODE_EXECUTE 10,095 · dosya / shell ~16.8k. Yargı train: WEB_SEARCH 32,241 · CALCULATE 20,233 · açık araç 12,592 · CODE_EXECUTE 10,072 · RESPOND 3,262 · dosya zincirleri ~3k.
+- Bilinen sınır: WEB_OPEN / DOWNLOAD / SEND_MAIL ve hata observation'ları hâlâ onlarca kayıt; teacher'lı adımda (§14).
+- Not: ms-marco bilgi soruları WEB_SEARCH, dpo açıklama / tavsiye soruları RESPOND etiketlidir. Sınır çoğunlukla doğru (somut varlık / sayı / tarih → arama), ama model üslup ipucuyla (kısa sorgu → arama) ayırmayı öğrenebilir; eval'de iki yönlü karışma ayrıca ölçülmeli.
+
+## Base checkpoint (0.9)
+
+Üç rol **Mercan-0.8B-DPO** üzerine eğitilir: `runs/nedolm-0p8b-continuation-dpo-v1-step1436-2xh200-prod-20260928/checkpoints/step_00007895.pt` (continuation SFT → DPO; DPO tek epoch, 7,895 adım × 32 çift, β 0.1, lr 5e-7). Gerekçe: en iyi Türkçe sohbet davranışı ve aynı tokenizer / sohbet şablonu (`sistem` / `kullanici` / `asistan`); önceki Yargı denemeleri de bu checkpoint'ten yapıldı. Sonraki GRPO/RLVR checkpoint'i çoktan seçmeli muhakemeye optimize edildiği için kullanılmaz; `Mercan-0.8B-SFT` hiçbir yerde kullanılmaz. Unutma riskine karşı: Yargı karışımında DPO'da görülmemiş / kısa sohbet cevapları (RESPOND) vardır ve her rolün eğitim sonrası genel Türkçe sohbet ile rol eval'i (§12) DPO checkpoint'iyle karşılaştırılır.
+
 `shared_data/manifest.json` gelecekte en az şunları sabitlemelidir:
 
 ```text
@@ -968,12 +1007,11 @@ Bir değişiklik yalnız tek modülde sessizce uygulanmamalıdır.
 Aşağıdaki konular henüz bu dosyada kesinleştirilmemiştir ve adım adım karara bağlanacaktır:
 
 ```text
-- eğitimde kullanılacak role özel kısa system prompt (shared_data mesajlarında yok; runtime ile aynı olmalı)
 - teacher'lı sentetik veri (§7): teacher seçimi (API / TRUBA'da açık model); Yargı hata observation'ları, FILE_READ parçalı biçimi, yapılandırılmış sonuçlar, "araç yapılandırılmamış"; WEB_OPEN / DOWNLOAD / SEND_MAIL; Yargı RESPOND cevaplarının teacher ile yeniden yazılması
 - şeması olmayan kaynaklar (ituperceptron Jupyter dışı ~20k, BTX24 mobil ~15k): şema yazılırsa Yürütme'ye açık araç olarak girer
 - Yasama'nın action listesini girdi olarak alması (şirket adaptasyonunu ucuzlatır; verideki `available_tools` gibi)
 - exact active source listesi
-- source balancing / sampling oranları
+- mix cap'lerinin ilk eğitim sonuçlarına göre ayarlanması (§9.1)
 - Yasama'nın fiziksel model/checkpoint standardı
 - Yürütme ve Yargı tek checkpoint mi iki checkpoint mi olacak
 - tokenizer/chat-template kesin sürümü
@@ -1030,6 +1068,13 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.9 — 2026-10-21
+
+- §4: Rol başına eğitim system prompt'u; runtime `prompt_style: "trained"` ile aynısını gönderir, few-shot turlarını eklemez.
+- §9.1: Eğitim karışımı `mix/v1` (kalite filtresi + deterministik örnekleme; Yasama 193,670 / Yürütme 120,218 / Yargı 81,374 train).
+- §9: Base checkpoint kararı: Mercan-0.8B-DPO `step_00007895.pt`.
+- §14: System prompt ve örnekleme oranı maddeleri kapandı.
 
 ## 0.8 — 2026-10-21
 
