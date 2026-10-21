@@ -3,7 +3,7 @@
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
 **Sürüm:** 0.8  
-**Tarih:** 2026-10-20  
+**Tarih:** 2026-10-21  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
 Bu dosya Mercan tool-use projesinin ortak çalışma sözleşmesidir. Yasama, Yürütme ve Yargı üzerinde yapılacak eğitim, veri hazırlama, evaluation ve runtime geliştirmelerinde bu dosya ortak referans olarak kullanılmalıdır.
