@@ -2,7 +2,7 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.9  
+**Sürüm:** 0.10  
 **Tarih:** 2026-10-21  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
@@ -472,7 +472,7 @@ Yasama'nın konuşma geçmişi (v0.3): `CONVERSATION_HISTORY` bloğu yalnız tur
 
 Her rolün eğitim ve runtime'da **aynı** system prompt'u vardır: `yasama.TRAINED_SYSTEM_PROMPT`, `yurutme.TRAINED_SYSTEM_PROMPT`, `yargi.TRAINED_SYSTEM_PROMPT` (`system_message()`). Eğitim karışımı (§9.1) her kaydın başına bunu koyar; runtime bunu `roles.<rol>.prompt_style: "trained"` ile gönderir ve few-shot turlarını eklemez. Varsayılan `"few_shot"`, eğitilmemiş genel checkpoint'ler içindir (eski uzun prompt + örnek turlar). Prompt değişirse mix yeniden üretilir ve model yeniden eğitilir; manifest prompt'un sha256'sını tutar.
 
-- Yasama (~2.9k karakter): görev, çıktı biçimi, registry açıklamalarından üretilen 17 action listesi ve dört karar kuralı (USER birincil, araçsız istek RESPOND, FINISH yalnız bu turun sonuçları isteği karşılıyorsa, eksik zorunlu bilgide ASK_CLARIFICATION). Action listesi registry'den geldiği için şirket adaptasyonunda liste ve veri birlikte değişir.
+- Yasama (1,200 karakter, ~384 token; 0.10): görev ve çıktı biçimi, 17 action'ın her biri için tek satırlık "ne zaman seçilir" özeti (`yasama.ACTION_SUMMARIES`) ve üç karar kuralı (USER birincil, FINISH yalnız bu turun sonuçları isteği karşılıyorsa, eksik zorunlu bilgide ASK_CLARIFICATION). Registry açıklamaları Yürütme içindir (argüman ipuçları) ve 0.9'daki prompt'u ~825 token yapıyordu; Yasama her adımda çalıştığı için kısaltıldı. Şirket adaptasyonunda şirket araçları bu listeye bir satırla girer, liste ve veri birlikte değişir.
 - Yürütme (~500 karakter): hiçbir araç adı geçmez; sözleşme istekteki TOOL_SCHEMA'dır, böylece aynı model şirket araçlarını da doldurur.
 - Yargı (~600 karakter): gözleme dayanma, hata ve boş sonucu açıkça söyleme, boş gözlemde doğrudan cevap, ham JSON / iç ad yazmama. `RUNTIME_INFO` runtime'da ayarlıysa sona eklenir; eğitim verisinde yoktur (teacher'lı adımda yetenek soruları için eklenebilir).
 ---
@@ -806,6 +806,19 @@ mix/v1/manifest.json                            katman başına mevcut/alınan, 
 - Kalite filtreleri: ms-marco isteği 20–200 karakter, büyük harf / rakamla başlayan ve soru biçiminde ("?" veya soru sözcüğü / eki) olmalı ("ms bir nörodejeneratif hastalık" gibi anahtar kelime parçaları düşer); aynı epizotların FINISH kayıtlarına da uygulanır. Yargı web cevabı 30–800 karakter, cümle sonu noktalamalı ve içerik sözcüklerinin (5 harflik kök) en az yarısı arama sonuçlarında geçmeli.
 - Validation / test katmanları train cap'inin %5'i ile sınırlanır (eval, kaynak çarpıklığını değil karışımı ölçer).
 
+- Eğitim uzunluğu (mix 2): system mesajı dahil `nedolm.chat_format` serialization'ında **8,192 NDSRF004 token**'ı aşan kayıt alınmaz (`--max-tokens`, `--vocab`); cap'li katmanlar boşalan yeri aynı katmandan doldurur.
+
+**Güncel: mix/v2** (2026-10-21, kod `71df41db`, shared_data v5; v1'den farkı kısa Yasama prompt'u ve 8,192 sınırı). Token sayıları eğitimdeki biçimle (rol başlıkları, kontrol token'ları, hedef sonrası EOS) ölçüldü (`mix/v2/TOKEN_COUNTS.json`):
+
+| Rol | train kayıt | Toplam token / epoch | Hedef (loss) token | System payı | Kayıt başı ort. / p95 | Uzunluktan elenen |
+|---|---:|---:|---:|---:|---:|---:|
+| Yasama | 193,670 | 112.8 M | 2.3 M | 74.4 M | 582 / 887 | 0 |
+| Yürütme | 120,197 | 115.3 M | 29.6 M | 17.1 M | 960 / 2,640 | 31 |
+| Yargı | 81,374 | 58.1 M | 3.8 M | 13.9 M | 714 / 1,698 | 6 (+1 validation) |
+| Toplam | 395,241 | 286.2 M | 35.7 M | | | |
+
+v1'de Yasama 198.3 M token'dı (%81'i system prompt). Validation / test: Yasama 8,349 / 8,420, Yürütme 5,250 / 5,412, Yargı 3,780 / 3,856.
+
 mix/v1 (2026-10-21, kod `14d7a8c0`, shared_data v5):
 
 | Rol | train | validation | test | Cap'li katmanlar (alınan / filtre sonrası mevcut) |
@@ -1068,6 +1081,11 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.10 — 2026-10-21
+
+- §4: Yasama eğitim prompt'u kısaltıldı: action başına tek satırlık özet (1,200 karakter, ~384 token; önce ~825 token).
+- §9.1: mix/v2: kısa Yasama prompt'u, 8,192 token eğitim uzunluğu; NDSRF004 ile ölçülmüş token sayıları (toplam 286 M token / epoch, 35.7 M hedef token).
 
 ## 0.9 — 2026-10-21
 
