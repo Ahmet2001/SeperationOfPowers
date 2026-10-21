@@ -2,8 +2,8 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.7  
-**Tarih:** 2026-10-19  
+**Sürüm:** 0.8  
+**Tarih:** 2026-10-20  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
 Bu dosya Mercan tool-use projesinin ortak çalışma sözleşmesidir. Yasama, Yürütme ve Yargı üzerinde yapılacak eğitim, veri hazırlama, evaluation ve runtime geliştirmelerinde bu dosya ortak referans olarak kullanılmalıdır.
@@ -661,6 +661,19 @@ Dört kaynağın (`arac_kullanimi` clean_yyy_v2, `combined_v2`, Gemini distil, H
 
 **Yeterlilik:** Yasama büyük dört sınıfta (FINISH, WEB_SEARCH, CALCULATE, CODE_EXECUTE) yeterli; diğer ~10 sınıf, RESPOND ve çok turlu kayıtlar sentetik veri ister. Yürütme WEB_SEARCH ve CALCULATE'te yeterli; dosya araçlarında yüzlerce örnek var; WEB_OPEN / DOWNLOAD / SEND_MAIL sentetiksiz olmaz. Yargı en zayıf rol: web araması ve hesap dışında; hata durumları, dosya araçları, FILE_READ RAG biçimi (`partial: true`, `[satır N]`) ve "araç yapılandırılmamış" observation'ı tamamen sentetik üretilmelidir.
 
+### Teacher'sız sentetik veri (0.8)
+
+İlk adım teacher model gerektirmeyen, gerçek veriden programatik üretimdir (`datatools/synth.py`). Amaç üç rolün temel formatı öğrenmesi; rötuş (hata observation'ları, FILE_READ parçalı biçimi, "araç yapılandırılmamış", WEB_OPEN / DOWNLOAD / SEND_MAIL) sonraki teacher'lı adımdadır.
+
+- **RESPOND.** Runtime RESPOND'u gözlemsiz Yargı ile cevaplar (`main.py`), bu yüzden iki rol veri ister.
+  - Kaynaklar: `dpo.parquet` (`erenfazlioglu/turkish-instruct-reasoning-dpo-3.4m`), Human-Like-DPO-TR, `helpsteer3-tr` preference (yalnız `general` ve `stem`; `code` çevirileri bozuk; tercih edilen cevap `overall_preference < 0` ise `response1`).
+  - Araç gerektirebilecek istekler kuralla elenir (`needs_tool`): aritmetik, hesap sözcükleri, güncel bilgi ve yakın yıllar, web / arama, URL ve e-posta adresi, dosya uzantısı, dosya / klasör / mail / indirme / komut sözcükleri.
+  - **DPO çakışması:** Mercan DPO modeli `continuation_dpo_v1/train`'de bu üç kaynakla eğitildi (main_dpo 178,045 · helpsteer3 24,577 · human_like 8,146). Yasama yalnız isteği ve yeni bir etiketi (`RESPOND`) görür, bu yüzden üç kaynağın istekleri kullanılır (dpo %20 örneklenir). Yargı aynı cevaplarla yeniden SFT'lenirse ezber ve uzun deneme üslubu riski var, yeni bir şey öğrenmez; bu yüzden Yargı yalnız boş observation biçimini öğrenecek kadar veri alır: kısa (≤ 1200 karakter) dpo cevaplarından %2 örneklem, **yalnız train**; ve DPO'da tutulmuş `helpsteer3-tr` validation (`md5` ile %50 train, %25 validation, %25 test). Yargı RESPOND eval'i yalnız bu görülmemiş kayıtlardan gelir. Human-Like cevapları kişisel deneyim iddia ettiği için hiç kullanılmaz.
+- **Geçmiş karıştırma.** Mevcut kayıtlara alakasız bir önceki tur eklenir, etiket değişmez. Bu, Yasama'nın önceki action'ı kopyalamasını ve Yargı'nın geçmişi cevap diye basmasını doğrudan eğitir.
+  - Önceki tur havuzu: kısa (≤ 1200 karakter) dpo sohbet turları (%3) ve gerçek araç turları (`arac_kullanimi` calculator istek + Yargı cevabı, %0.6); v5'te 4,379 + 3,932 tur.
+  - Oranlar: büyük sınıflar (WEB_SEARCH, CALCULATE, CODE_EXECUTE, FINISH, FILE_CREATE) %0.4, açık araçlar %10, diğer tüm sınıflar %100. Yasama ve Yürütme yalnız ilk adım kayıtlarını, Yargı tümünü karıştırır.
+  - Kopya `source_id#hist` alır ve orijinalinin split'inde kalır (test kaydı train'e sızmaz).
+
 ### Format uyumu (2026-10-20)
 
 - Observation dört alanı her kaynakta var; 734k observation'da fazladan `tool_call_id` (atılır).
@@ -724,10 +737,10 @@ shared_data/
     └── test.*
 ```
 
-**Güncel sürüm v3, henüz ACTIVE değil** (§7'deki eksik sınıflar sentetik veriyle tamamlanıp örnekleme oranları belirlenene kadar):
+**Güncel sürüm v5, temel format eğitimi için kullanılabilir; henüz ACTIVE değil** (teacher'lı sentetik veri ve örnekleme oranları belirlenene kadar):
 
 ```text
-/arf/scratch/egitimg16/nedolm_0p8b/tooluse_inspect/yasama-yurutme-yargi/shared_data/v3/
+/arf/scratch/egitimg16/nedolm_0p8b/tooluse_inspect/yasama-yurutme-yargi/shared_data/v5/
 ├── manifest.json              aşağıdaki alanlar + kaynak sha256, sayılar, ret sebepleri
 ├── contracts/tool_registry.json
 ├── rejects/<rol>.samples.jsonl  her ret sebebinden örnek
@@ -740,6 +753,20 @@ shared_data/
 {"id", "source", "source_dataset", "split", "action", "step_index", "has_history",
  ["error_observations"], "messages": [request turn(s)..., {"role": "assistant", "content": <target>}]}
 ```
+
+v5 sonucu (2026-10-21, kod `a8b2cffe`, schema 4, 12.6 dk; v4 = + teacher'sız RESPOND ve geçmiş karıştırma, v5 = Yargı RESPOND DPO çakışmasına göre sınırlandı, §7):
+
+| Rol | train | validation | test | Toplam | v3 | v4 |
+|---|---:|---:|---:|---:|---:|---:|
+| Yasama | 1,442,095 | 33,717 | 34,690 | 1,510,502 | 1,451,368 | 1,510,502 |
+| Yürütme | 811,608 | 20,859 | 21,706 | 854,173 | 847,895 | 854,173 |
+| Yargı | 664,291 | 14,682 | 14,952 | 693,925 | 684,985 | 735,872 |
+
+- Yasama RESPOND 60 → **52,832** (sohbet kaynakları 52,734; tekrar olduğu için 8,612 istek elendi). Geçmişli kayıt 43 → **12,454** (geçmiş karıştırma 6,400; ASK_CLARIFICATION 1,661, FILE_LIST 1,161 gibi nadir sınıflar ikiye katlandı).
+- Yürütme geçmişli kayıt 4,541 → **10,819** (geçmiş karıştırma 6,278).
+- Yargı RESPOND 0 → **3,750**: train 3,262 (kısa dpo 2,811 + HelpSteer3 validation 451), validation 226 ve test 262 yalnız HelpSteer3 validation'dan. v4'te kısıtsız sohbet cevaplarıyla 45,697 idi. Geçmişli kayıt 4,546 → **10,210** (geçmiş karıştırma 5,190); hata observation'lı 84.
+- Geçmiş karıştırma Yargı retleri: İngilizce cevap 366, uzunluk 135; orijinal kayıtlarla aynı sebepler.
+- Hâlâ boş: WEB_OPEN 11, DOWNLOAD 32, SEND_MAIL 38 (Yasama) ve Yargı hata observation'ları; teacher'lı adıma kaldı (§14).
 
 v3 sonucu (2026-10-20, kod `71ce9b03`, 12.8 dk; v1 = ilk build, v2 = + `write_file` koşullu alias, v3 = + açık araçlar ve uzunluk sınırı):
 
@@ -942,7 +969,7 @@ Aşağıdaki konular henüz bu dosyada kesinleştirilmemiştir ve adım adım ka
 
 ```text
 - eğitimde kullanılacak role özel kısa system prompt (shared_data mesajlarında yok; runtime ile aynı olmalı)
-- §7'deki eksik sınıflar için sentetik veri üretimi
+- teacher'lı sentetik veri (§7): teacher seçimi (API / TRUBA'da açık model); Yargı hata observation'ları, FILE_READ parçalı biçimi, yapılandırılmış sonuçlar, "araç yapılandırılmamış"; WEB_OPEN / DOWNLOAD / SEND_MAIL; Yargı RESPOND cevaplarının teacher ile yeniden yazılması
 - şeması olmayan kaynaklar (ituperceptron Jupyter dışı ~20k, BTX24 mobil ~15k): şema yazılırsa Yürütme'ye açık araç olarak girer
 - Yasama'nın action listesini girdi olarak alması (şirket adaptasyonunu ucuzlatır; verideki `available_tools` gibi)
 - exact active source listesi
@@ -1003,6 +1030,12 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.8 — 2026-10-21
+
+- §7: Teacher'sız sentetik veri: RESPOND (sohbet kaynakları, `needs_tool` filtresi) ve geçmiş karıştırma. DPO çakışması kuralı: Yasama DPO'da görülmüş isteklerin hepsini kullanır, Yargı yalnız ~3k biçim örneği (train) alır ve RESPOND eval'i DPO'da tutulmuş HelpSteer3 validation'dan gelir.
+- §9: shared_data v4 ve v5; güncel v5 sayıları (Yasama RESPOND 52,832, Yargı RESPOND 3,750, geçmişli kayıtlar Yasama 12,454 / Yürütme 10,819 / Yargı 10,210).
+- §14: Sentetik veri maddesi teacher'lı adıma daraltıldı.
 
 ## 0.7 — 2026-10-20
 
