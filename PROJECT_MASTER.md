@@ -2,8 +2,8 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.10  
-**Tarih:** 2026-10-21  
+**Sürüm:** 0.11  
+**Tarih:** 2026-10-24  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
 Bu dosya Mercan tool-use projesinin ortak çalışma sözleşmesidir. Yasama, Yürütme ve Yargı üzerinde yapılacak eğitim, veri hazırlama, evaluation ve runtime geliştirmelerinde bu dosya ortak referans olarak kullanılmalıdır.
@@ -378,8 +378,9 @@ turn_index          → konuşma turu
 Observation'lar **kesilmez**. Her rol işi için gereken ayrıntıyı görür:
 
 ```text
-Yasama  : STATE içindeki her observation yalnız {action, status, error}
-          (data/içerik yok — Yasama yalnız neyin çalıştığını ve nasıl bittiğini bilmeli)
+Yasama  : STATE içindeki her observation {action, status, error}; son üç observation
+          ayrıca data_preview = data'nın kompakt JSON'unun ilk 200 karakteri ("…" ile)
+          (0.11; tam içerik yok — devam / bitir kararı için sonucun başı yeter)
 Yürütme : STATE içindeki observation'lar tam (önceki sonuçtan argüman çıkarır,
           örn. FILE_READ sonrası FILE_EDIT'in old_text'i)
 Yargı   : <tool_observations> tam
@@ -808,7 +809,9 @@ mix/v1/manifest.json                            katman başına mevcut/alınan, 
 
 - Eğitim uzunluğu (mix 2): system mesajı dahil `nedolm.chat_format` serialization'ında **8,192 NDSRF004 token**'ı aşan kayıt alınmaz (`--max-tokens`, `--vocab`); cap'li katmanlar boşalan yeri aynı katmandan doldurur.
 
-**Güncel: mix/v2** (2026-10-21, kod `71df41db`, shared_data v5; v1'den farkı kısa Yasama prompt'u ve 8,192 sınırı). Token sayıları eğitimdeki biçimle (rol başlıkları, kontrol token'ları, hedef sonrası EOS) ölçüldü (`mix/v2/TOKEN_COUNTS.json`):
+**mix/v3** (2026-10-24, kod `f9b30236`, shared_data v6): mix/v2 ile aynı kurallar; Yasama STATE'i son üç adımın `data_preview`'ını taşır (§3.3). Yasama train 193,732 kayıt / 118.9 M token (+%5); Yürütme ve Yargı v2 ile aynı.
+
+**mix/v2** (2026-10-21, kod `71df41db`, shared_data v5; v1'den farkı kısa Yasama prompt'u ve 8,192 sınırı). Token sayıları eğitimdeki biçimle (rol başlıkları, kontrol token'ları, hedef sonrası EOS) ölçüldü (`mix/v2/TOKEN_COUNTS.json`):
 
 | Rol | train kayıt | Toplam token / epoch | Hedef (loss) token | System payı | Kayıt başı ort. / p95 | Uzunluktan elenen |
 |---|---:|---:|---:|---:|---:|---:|
@@ -995,6 +998,23 @@ critical-field recall
 
 ---
 
+## İlk rol eğitimleri ve ölçümler (0.11, 2026-10-22 / 24)
+
+Eğitim: `training/train_role.py` (TRUBA, tek H200, `training/train_role.slurm`). DPO `step_00007895.pt`'den tam parametre; kayıtlar `nedolm.chat_format` biçiminde, EOS'ta bölünen 8,193 token'lık satırlara paketlenir (FlashAttention varlen, pozisyonlar konuşma başına sıfırlanır); loss yalnız son asistan mesajı + `<|mesaj_bitir|>`. AdamW (0.9, 0.95), wd 0, clip 1.0, %3 warmup, cosine → peak'in %10'u; adım = 3 × 4 satır ≈ 98k token; ~68–74k token/s, tepe bellek 74.5 GiB (H100'e sığmaz). Ölçüm: `training/eval_role.py` + `training/eval_metrics.py` (greedy üretim, test split).
+
+| Rol | Veri | LR / epoch | Süre | Checkpoint (`runs/…/checkpoints/`) |
+|---|---|---|---:|---|
+| Yasama | mix/v3 | 1e-5 / 2 | 60 dk | `mercan-yasama-mixv3-dpo7895-20261024/…/epoch_02_step_002532.pt` |
+| Yürütme | mix/v2 | 1e-5 / 2 | 68 dk | `mercan-yurutme-mixv2-dpo7895-20261022/…/epoch_02_step_002601.pt` |
+| Yargı | mix/v2 | 5e-6 / 2 | 32 dk | `mercan-yargi-mixv2-dpo7895-20261022/…/epoch_02_step_001272.pt` (epoch 2 val loss 1.057 ≈ epoch 1) |
+
+- **Yasama** test doğruluğu: mix/v2 (STATE'te yalnız sonuç) %93.55 → mix/v3 (son üç adıma `data_preview`, §3.3) **%95.34**; geçersiz çıktı 0. Hatalar 543 → 392; CODE_EXECUTE → FINISH 191 → 35, recall CODE_EXECUTE %61.9 → %92.8. Kalan hataların %56'sı hesap zincirlerinde FINISH ↔ CALCULATE (144 + 76; önizleme bunu değiştirmedi: sonucun soruyu karşılayıp karşılamadığı çok adımlı akıl yürütme ister). Zayıf: SHELL_EXECUTE %39, FILE_EDIT %47, FILE_READ %56 (test'te 18–28 örnek; teacher'lı veri bekler).
+- **Yürütme** (action başına 40 örnek, 384 kayıt): JSON + şema geçerli %83.3; WEB_SEARCH %97.5 doğru, FILE_READ / FILE_SEARCH / FILE_LIST / CALCULATE çıktılarının %100'ü şemaya uygun; açık araçlar şema %90, birebir %45; CODE_EXECUTE kodlarının %100'ü Python olarak derlenir. CALCULATE anlamsal doğruluk (ifade sonucu eşit) %42.5: kelime problemlerinde yanlış ara adım. Uzun içerikte greedy tekrar döngüsü: 3,072 token sınırına takılan 64 çıktının 60'ı FILE_CREATE / FILE_EDIT / SHELL_EXECUTE (Hunter; hedef istekten çıkarılamaz).
+- **Yargı** (action başına 30 örnek, 219 kayıt), aynı kayıtlarda DPO base ile: JSON / iç biçim sızıntısı %38 → **%0**, gözlemde olmayan sayı %17.5 → %10.6, İngilizce %5.9 → %2.3, referansla kelime F1 0.16 → 0.53, uzunluk / referans 6.6× → ~1×. 12 genel sohbet sorusunda DPO base Yargı biçiminde 11 kez sahte `<tool_observations>` üretir, Yargı hepsini düzgün cevaplar; bilgi hataları sürer (0.8B sınırı). Test örnekleminde hata observation'ı yok: "hatayı kabul etme" ölçülemedi (teacher'lı adım).
+- Açık: Yürütme ve Yargı için runtime'da tekrar cezası / `max_tokens`; FINISH ↔ CALCULATE için hesap zincirlerinin incelenmesi; `.mercan` export ve uçtan uca CLI denemesi.
+
+---
+
 # 13. Değişiklik Yönetimi
 
 Bu projede interface veya veri formatı değiştiren bir karar alınırken şu sıra izlenmelidir:
@@ -1081,6 +1101,12 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.11 — 2026-10-24
+
+- §3.3: Yasama STATE'inde son üç observation'a `data_preview` (data'nın ilk 200 karakteri). Gerekçe: rol eval'inde Yasama hatalarının %85'i çok adımlı zincirlerde devam / bitir kararıydı.
+- §9.1: mix/v3 (shared_data v6, schema 5).
+- §12: İlk rol eğitimleri (DPO base, mix/v2–v3) ve üretimli eval sonuçları; Yasama test %95.34, Yürütme şema geçerliliği %83.3, Yargı JSON sızıntısı %0.
 
 ## 0.10 — 2026-10-21
 
