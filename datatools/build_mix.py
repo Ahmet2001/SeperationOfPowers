@@ -32,7 +32,7 @@ from yargi.yargi import system_message as yargi_system_message
 from yasama.yasama import system_message as yasama_system_message
 from yurutme.yurutme import system_message as yurutme_system_message
 
-MIX_VERSION = 2  # 2: short Yasama prompt, 8192-token limit
+MIX_VERSION = 3  # 2: short Yasama prompt, 8192-token limit; 3: from shared_data v6 (Yasama data previews)
 ROLES = ("yasama", "yurutme", "yargi")
 SPLITS = ("train", "validation", "test")
 SYSTEM_MESSAGES = {

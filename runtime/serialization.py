@@ -27,10 +27,13 @@ def _history_block(
     )
 
 
-# How much of each observation a role sees (PROJECT_MASTER §3.2, §4).  Nothing
-# is truncated:
-# - Yasama only decides the next action, so it sees what ran and how it ended
-#   (action / status / error), not file or page content.
+# How much of each observation a role sees (PROJECT_MASTER §3.2, §4).
+# - Yasama decides the next action: it sees what ran and how it ended
+#   (action / status / error) and, for the latest few steps, the start of the
+#   result as `data_preview`. Without results it could not tell whether a
+#   multi-step calculation or notebook run had reached the answer, and that
+#   continue-or-finish choice was 85% of its errors (§12). Full file or page
+#   content stays out.
 # - Yurutme fills arguments from earlier results (e.g. FILE_EDIT after a
 #   FILE_READ), so it sees observations in full.
 # - Yargi answers from the content and sees observations in full.
@@ -40,10 +43,26 @@ def _history_block(
 _OBSERVATION_OUTCOME_FIELDS = ("action", "status", "error")
 
 
+# Latest observations with a preview, and its length in characters of
+# compact JSON; a cut preview ends with "…".
+YASAMA_PREVIEW_OBSERVATIONS = 3
+YASAMA_PREVIEW_CHARS = 200
+
+
 def _outcome(observation: Any) -> Any:
     if not isinstance(observation, Mapping):
         return observation
     return {key: observation.get(key) for key in _OBSERVATION_OUTCOME_FIELDS}
+
+
+def _with_preview(observation: Any) -> Any:
+    outcome = _outcome(observation)
+    if not isinstance(observation, Mapping) or observation.get("data") in (None, {}, [], ""):
+        return outcome
+    data = json.dumps(observation["data"], ensure_ascii=False, separators=(",", ":"))
+    if len(data) > YASAMA_PREVIEW_CHARS:
+        data = data[:YASAMA_PREVIEW_CHARS] + "…"
+    return {**outcome, "data_preview": data}
 
 
 def _deduplicated_state(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -56,13 +75,17 @@ def _deduplicated_state(state: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def yasama_state(state: Mapping[str, Any]) -> dict[str, Any]:
-    """STATE as Yasama sees it: observation outcomes without their data."""
+    """STATE as Yasama sees it: observation outcomes, with a short data
+    preview for the latest steps."""
     serialized = _deduplicated_state(state)
     if serialized.get("last_observation") is not None:
-        serialized["last_observation"] = _outcome(serialized["last_observation"])
-    if isinstance(serialized.get("recent_observations"), Sequence):
+        serialized["last_observation"] = _with_preview(serialized["last_observation"])
+    recent = serialized.get("recent_observations")
+    if isinstance(recent, Sequence):
+        first_preview = len(recent) - YASAMA_PREVIEW_OBSERVATIONS
         serialized["recent_observations"] = [
-            _outcome(observation) for observation in serialized["recent_observations"]
+            _with_preview(observation) if index >= first_preview else _outcome(observation)
+            for index, observation in enumerate(recent)
         ]
     return serialized
 

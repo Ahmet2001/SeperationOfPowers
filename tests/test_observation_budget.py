@@ -13,6 +13,7 @@ from runtime.serialization import (
     serialize_yargi_input,
     serialize_yasama_input,
     serialize_yurutme_input,
+    YASAMA_PREVIEW_CHARS,
     yasama_state,
     yurutme_state,
 )
@@ -41,13 +42,26 @@ class RoleViewTests(unittest.TestCase):
         self.state = {"completed_actions": ["FILE_READ"], "last_observation": self.observation,
                       "recent_observations": [self.observation], "step_index": 1}
 
-    def test_yasama_sees_outcomes_without_content(self) -> None:
+    def test_yasama_sees_outcomes_and_a_short_preview(self) -> None:
         view = yasama_state(self.state)
-        self.assertEqual(view["recent_observations"],
-                         [{"action": "FILE_READ", "status": "success", "error": None}])
+        [seen] = view["recent_observations"]
+        self.assertEqual({k: seen[k] for k in ("action", "status", "error")},
+                         {"action": "FILE_READ", "status": "success", "error": None})
+        self.assertTrue(seen["data_preview"].startswith('{"path":"main.py","content":"zzz'))
+        self.assertEqual(len(seen["data_preview"]), YASAMA_PREVIEW_CHARS + 1)
+        self.assertTrue(seen["data_preview"].endswith("…"))
         self.assertEqual(view["completed_actions"], ["FILE_READ"])
         prompt = serialize_yasama_input(user_prompt="oku", conversation_history=[], state=self.state)
-        self.assertNotIn("zzz", prompt)
+        self.assertNotIn("z" * (YASAMA_PREVIEW_CHARS + 1), prompt)
+
+    def test_yasama_previews_only_the_latest_steps(self) -> None:
+        results = [{"action": "CALCULATE", "data": {"result": n}, "status": "success", "error": None}
+                   for n in range(5)]
+        failed = {"action": "FILE_READ", "data": {}, "status": "error", "error": "No such file"}
+        view = yasama_state({"completed_actions": ["CALCULATE"] * 5 + ["FILE_READ"],
+                             "recent_observations": [*results, failed]})
+        previews = [o.get("data_preview") for o in view["recent_observations"]]
+        self.assertEqual(previews, [None, None, None, '{"result":3}', '{"result":4}', None])
 
     def test_yurutme_sees_full_content_once(self) -> None:
         view = yurutme_state(self.state)

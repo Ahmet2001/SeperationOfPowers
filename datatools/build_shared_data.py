@@ -53,8 +53,9 @@ from yasama.yasama import request_message as yasama_request_message
 from datatools import synth
 from yurutme.yurutme import request_message as yurutme_request_message
 
-DATASET_SCHEMA_VERSION = 4  # 2: open tools; 3: teacher-free RESPOND and history mixing;
-                            # 4: Yargi RESPOND only from short dpo answers and HelpSteer3 validation
+DATASET_SCHEMA_VERSION = 5  # 2: open tools; 3: teacher-free RESPOND and history mixing;
+                            # 4: Yargi RESPOND only from short dpo answers and HelpSteer3 validation;
+                            # 5: Yasama STATE shows a data preview of the latest steps
 ROLES = ("yasama", "yurutme", "yargi")
 SPLITS = ("train", "validation", "test")
 TEST_SHARE, VALIDATION_SHARE = 0.02, 0.02
