@@ -3,7 +3,9 @@
     python training/eval_role.py --role yurutme --checkpoint <run>/checkpoints/epoch_02_step_002601.pt \\
         --mix <mix/v2> --out <run>/eval_test
 
-Greedy decoding, as the runtime does for Yasama and Yurutme. Writes
+Greedy decoding, as the runtime does for Yasama and Yurutme;
+``--repeat-penalty`` applies libmercan's penalty (each distinct token among
+the last ``--repeat-last-n`` generated ones, prompt excluded). Writes
 ``generations.jsonl`` (request, reference, output) and ``report.json``
 (training/eval_metrics.py). ``--chat`` also answers a fixed set of general
 Turkish requests in Yargi's no-observation format, to compare a Yargi
@@ -68,7 +70,8 @@ def sample(records: list[dict[str, Any]], per_action: int) -> list[dict[str, Any
     return chosen
 
 
-def generate(model, prompts: list[list[int]], max_new: int, budget: int, device) -> list[tuple[list[int], bool]]:
+def generate(model, prompts: list[list[int]], max_new: int, budget: int, device, *,
+             repeat_penalty: float = 1.0, repeat_last_n: int = 64) -> list[tuple[list[int], bool]]:
     """Greedy continuation of every prompt; packed recomputation per step (the
     model has no KV cache). Returns (tokens without the stop id, stopped)."""
     import torch
@@ -100,7 +103,15 @@ def generate(model, prompts: list[list[int]], max_new: int, budget: int, device)
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     _, hidden = model(flat, return_hidden=True, position_ids=pos, cu_seqlens=cums,
                                       max_seqlen=max(lens))
-                    next_ids = F.linear(hidden[0, ends], weight).float().argmax(-1).tolist()
+                    logits = F.linear(hidden[0, ends], weight).float()
+                if repeat_penalty != 1.0 and repeat_last_n:
+                    # libmercan generation_sampling.hpp: stop ids are never in outs.
+                    for row, i in enumerate(chunk):
+                        recent = torch.tensor(sorted(set(outs[i][-repeat_last_n:])), device=device, dtype=torch.long)
+                        if len(recent):
+                            values = logits[row, recent]
+                            logits[row, recent] = torch.where(values > 0, values / repeat_penalty, values * repeat_penalty)
+                next_ids = logits.argmax(-1).tolist()
                 for i, token in zip(chunk, next_ids):
                     if token in STOP_IDS:
                         stopped[i] = True
@@ -120,6 +131,8 @@ def main() -> None:
     parser.add_argument("--per-action", type=int, help="records per action label; 0 = all")
     parser.add_argument("--max-new", type=int)
     parser.add_argument("--budget", type=int, default=65536, help="tokens per forward pass")
+    parser.add_argument("--repeat-penalty", type=float, default=1.0)
+    parser.add_argument("--repeat-last-n", type=int, default=64)
     parser.add_argument("--chat", action="store_true", help="also answer CHAT_PROMPTS as Yargi")
     nedolm = Path("/arf/scratch/egitimg16/nedolm_0p8b")
     parser.add_argument("--model-config", type=Path, default=nedolm / "sft_im_special_v1/nedolm_base_B_step10397_32k2.yaml")
@@ -165,7 +178,8 @@ def main() -> None:
         ids, start, _ = encode_record(encode, record["messages"])
         prompts.append(ids[:start])
     started = time.time()
-    results = generate(model, prompts, max_new, args.budget, device)
+    penalty = {"repeat_penalty": args.repeat_penalty, "repeat_last_n": args.repeat_last_n}
+    results = generate(model, prompts, max_new, args.budget, device, **penalty)
     rows = []
     with (args.out / "generations.jsonl").open("w", encoding="utf-8") as handle:
         for record, (tokens, stopped) in zip(records, results):
@@ -174,7 +188,7 @@ def main() -> None:
                    "output": decode(tokens), "truncated": not stopped}
             rows.append(row)
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    report = {"role": args.role, "checkpoint": str(args.checkpoint), "split": args.split,
+    report = {"role": args.role, "checkpoint": str(args.checkpoint), "split": args.split, **penalty,
               "records": len(rows), "truncated": sum(r["truncated"] for r in rows),
               "seconds": round(time.time() - started, 1), "scores": SCORERS[args.role](rows)}
 
@@ -187,7 +201,7 @@ def main() -> None:
                         {"role": "assistant", "content": "-"}]
             ids, start, _ = encode_record(encode, messages)
             chat_prompts.append(ids[:start])
-        answers = generate(model, chat_prompts, 400, args.budget, device)
+        answers = generate(model, chat_prompts, 400, args.budget, device, **penalty)
         chat = [{"prompt": p, "answer": decode(t), "truncated": not s} for p, (t, s) in zip(CHAT_PROMPTS, answers)]
         (args.out / "chat.json").write_text(json.dumps(chat, ensure_ascii=False, indent=2) + "\n")
         report["chat_answers"] = len(chat)
