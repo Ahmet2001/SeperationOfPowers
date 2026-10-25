@@ -356,16 +356,42 @@ def chat_rows(root: Path, role: str, limit: int | None) -> Iterator[dict[str, An
     )
 
 
-def role_inputs(root: Path, role: str, ctx: Context, limit: int | None):
-    """(source name, description, rows) in build order."""
+REUSED_SOURCES = ("chat_respond", "history_mix")
+_RECORD_KEYS = frozenset({"id", "source", "source_dataset", "split", "action", "messages"})
+
+
+def reused_rows(previous: Path, role: str, source: str) -> Iterator[dict[str, Any]]:
+    """Built records of ``source`` from an earlier shared_data version."""
+    for split in SPLITS:
+        for record in read_rows(previous / role / f"{split}.jsonl.gz"):
+            if record["source"] == source:
+                yield {"_record": record}
+
+
+def reused_record(row: dict[str, Any], role: str):
+    record = row["_record"]
+    if role == "yargi":
+        check_answer_form(record["messages"][-1]["content"].strip())
+    meta = {k: v for k, v in record.items() if k not in _RECORD_KEYS}
+    return record["action"], record["messages"], meta
+
+
+def role_inputs(root: Path, role: str, ctx: Context, limit: int | None, reuse_chat: Path | None = None):
+    """(source name, description, rows) in build order. ``reuse_chat`` takes
+    chat_respond and history_mix records from an earlier version instead of
+    the chat parquets (removed from TRUBA on 2026-10-25, PROJECT_MASTER §9)."""
     for source, path in sources(root, role):
         yield source, path.name, read_rows(path, limit)
-    if role != "yurutme":
-        yield "chat_respond", "dpo + Human-Like + HelpSteer3", chat_rows(root, role, limit)
     calc = list(short_calc.episodes(limit or short_calc.EPISODES))
     # Yurutme verifies a CALCULATE row against the episode's recorded results.
     ctx.calc_results.update({item["source_id"]: [item["result"]] for item in calc})
     yield short_calc.SOURCE, "templated everyday calculations", short_calc.rows(role, calc)
+    if reuse_chat is not None:
+        for source in REUSED_SOURCES:
+            yield source, f"reused from {reuse_chat.name}", reused_rows(reuse_chat, role, source)
+        return
+    if role != "yurutme":
+        yield "chat_respond", "dpo + Human-Like + HelpSteer3", chat_rows(root, role, limit)
     yield "history_mix", "existing records + earlier turn", history_mix_rows(root, role, ctx, limit)
 
 
@@ -380,7 +406,7 @@ def sha256(path: Path) -> str:
 
 
 def build(root: Path, out: Path, *, version: str, limit: int | None, hash_sources: bool,
-          revision: str | None = None) -> dict[str, Any]:
+          revision: str | None = None, reuse_chat: Path | None = None) -> dict[str, Any]:
     started = time.time()
     mapping_path = root / "yasama-yurutme-yargi" / "ontology" / "YASAMA_16CLASS_MAPPING_V1.json"
     aliases = load_aliases(json.loads(mapping_path.read_text(encoding="utf-8")))
@@ -389,7 +415,7 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
     log(f"web queries: {len(queries)}")
     calc_results, tool_exchanges = collect_calc_results(root, limit)
     log(f"calculator episodes: {len(calc_results)}")
-    chat_exchanges = collect_chat_exchanges(root, limit)
+    chat_exchanges = [] if reuse_chat else collect_chat_exchanges(root, limit)
     log(f"history pool: {len(tool_exchanges)} tool turns + {len(chat_exchanges)} chat turns")
     new_writes = collect_new_file_writes(root, limit)
     log(f"write_file as FILE_CREATE: {len(new_writes)}")
@@ -413,10 +439,13 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
         extra = Counter()
         samples: dict[str, list[dict[str, Any]]] = defaultdict(list)
         try:
-            for source, description, rows in role_inputs(root, role, ctx, limit):
+            for source, description, rows in role_inputs(root, role, ctx, limit, reuse_chat):
                 for index, row in enumerate(rows):
                     try:
-                        label, messages, meta = BUILDERS[role](row, source, ctx)
+                        if "_record" in row:
+                            label, messages, meta = reused_record(row, role)
+                        else:
+                            label, messages, meta = BUILDERS[role](row, source, ctx)
                     except Reject as exc:
                         role_rejects[source][exc.reason] += 1
                         if len(samples[exc.reason]) < REJECT_SAMPLES:
@@ -430,11 +459,13 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
                         role_rejects[source]["duplicate"] += 1
                         continue
                     seen.add(key)
-                    split = row.get("_split") or split_for(source, row)
+                    previous = row.get("_record") or {}
+                    split = previous.get("split") or row.get("_split") or split_for(source, row)
                     record = {
-                        "id": f"{source}:{row.get('source_id')}:{meta.get('step_index', 0)}:{index}",
+                        # A reused record keeps its id, so mix sampling picks it as before.
+                        "id": previous.get("id") or f"{source}:{row.get('source_id')}:{meta.get('step_index', 0)}:{index}",
                         "source": source,
-                        "source_dataset": row.get("source_dataset"),
+                        "source_dataset": previous.get("source_dataset", row.get("source_dataset")),
                         "split": split,
                         "action": label,
                         **meta,
@@ -471,7 +502,7 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
                     handle.write(json.dumps({"reason": reason, **sample}, ensure_ascii=False) + "\n")
 
     source_files = sorted({str(p) for role in ROLES for _, p in sources(root, role)}
-                          | {str(p) for paths in chat_paths(root).values() for p in paths})
+                          | (set() if reuse_chat else {str(p) for paths in chat_paths(root).values() for p in paths}))
     manifest = {
         "schema_version": DATASET_SCHEMA_VERSION,
         "dataset_version": version,
@@ -486,6 +517,7 @@ def build(root: Path, out: Path, *, version: str, limit: int | None, hash_source
         "sources": {
             path: {"sha256": sha256(Path(path)) if hash_sources else None} for path in source_files
         },
+        "reused": {"from": str(reuse_chat), "sources": list(REUSED_SOURCES)} if reuse_chat else None,
         "split_policy": "combined_v2 keeps its split; others by md5(source:source_id): test 2%, validation 2%",
         "dedup_policy": "exact duplicate messages per role dropped (first kept)",
         "limit_per_file": limit,
@@ -520,9 +552,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, help="rows per source file (smoke runs)")
     parser.add_argument("--no-hash", action="store_true", help="skip source sha256")
     parser.add_argument("--code-revision", help="SoP commit, when running from an archive without .git")
+    parser.add_argument("--reuse-chat", type=Path,
+                        help="earlier shared_data version to take chat_respond / history_mix records from")
     args = parser.parse_args(argv)
     manifest = build(args.root, args.out, version=args.version, limit=args.limit,
-                     hash_sources=not args.no_hash, revision=args.code_revision)
+                     hash_sources=not args.no_hash, revision=args.code_revision, reuse_chat=args.reuse_chat)
     print(json.dumps(manifest["counts"], ensure_ascii=False)[:2000])
     return 0
 

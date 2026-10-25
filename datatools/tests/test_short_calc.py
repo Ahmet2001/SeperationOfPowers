@@ -1,8 +1,12 @@
+import gzip
+import json
+import tempfile
 import unittest
 from collections import Counter
+from pathlib import Path
 
 from datatools import short_calc
-from datatools.build_shared_data import BUILDERS, Context
+from datatools.build_shared_data import BUILDERS, Context, reused_record, reused_rows
 from datatools.normalize import Reject, check_answer_form, load_aliases
 
 
@@ -46,6 +50,28 @@ class AnswerFormTests(unittest.TestCase):
         for text in ("Sonuç -4.0'dır.", "Kişi başı 156,25 TL düşer.", "Bu nedenle cevap 12'dir."):
             with self.subTest(text=text):
                 check_answer_form(text)
+
+
+class ReuseTests(unittest.TestCase):
+    def test_reused_records_keep_id_and_split_and_pass_the_answer_filter(self) -> None:
+        def record(id_, source, answer):
+            return {"id": id_, "source": source, "source_dataset": "d", "split": "test", "action": "RESPOND",
+                    "has_history": False, "messages": [{"role": "user", "content": "x"},
+                                                       {"role": "assistant", "content": answer}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "yargi").mkdir()
+            for split in ("train", "validation", "test"):
+                with gzip.open(Path(tmp) / "yargi" / f"{split}.jsonl.gz", "wt") as handle:
+                    if split == "test":
+                        for item in (record("a", "chat_respond", "Merhaba!"), record("b", "chat_respond", "Uygulanamaz"),
+                                     record("c", "arac_kullanimi", "Tamam.")):
+                            handle.write(json.dumps(item) + "\n")
+            rows = list(reused_rows(Path(tmp), "yargi", "chat_respond"))
+        self.assertEqual([r["_record"]["id"] for r in rows], ["a", "b"])
+        label, messages, meta = reused_record(rows[0], "yargi")
+        self.assertEqual((label, messages[-1]["content"], meta), ("RESPOND", "Merhaba!", {"has_history": False}))
+        with self.assertRaises(Reject):
+            reused_record(rows[1], "yargi")
 
 
 if __name__ == "__main__":
