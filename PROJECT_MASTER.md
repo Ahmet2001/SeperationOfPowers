@@ -2,8 +2,8 @@
 
 **Dosya:** `PROJECT_MASTER.md`  
 **Durum:** ACTIVE / AUTHORITATIVE  
-**Sürüm:** 0.11  
-**Tarih:** 2026-10-24  
+**Sürüm:** 0.12  
+**Tarih:** 2026-10-25  
 **Ana kopya:** `SeperationOfPowers/PROJECT_MASTER.md` (git). TRUBA'daki `yasama-yurutme-yargi/PROJECT_MASTER.md` bunun kopyasıdır; değişiklik önce repoda yapılır. `MasterFormat.txt` tarihsel tasarım notudur; çelişkide bu dosya geçerlidir.
 
 Bu dosya Mercan tool-use projesinin ortak çalışma sözleşmesidir. Yasama, Yürütme ve Yargı üzerinde yapılacak eğitim, veri hazırlama, evaluation ve runtime geliştirmelerinde bu dosya ortak referans olarak kullanılmalıdır.
@@ -1011,7 +1011,31 @@ Eğitim: `training/train_role.py` (TRUBA, tek H200, `training/train_role.slurm`)
 - **Yasama** test doğruluğu: mix/v2 (STATE'te yalnız sonuç) %93.55 → mix/v3 (son üç adıma `data_preview`, §3.3) **%95.34**; geçersiz çıktı 0. Hatalar 543 → 392; CODE_EXECUTE → FINISH 191 → 35, recall CODE_EXECUTE %61.9 → %92.8. Kalan hataların %56'sı hesap zincirlerinde FINISH ↔ CALCULATE (144 + 76; önizleme bunu değiştirmedi: sonucun soruyu karşılayıp karşılamadığı çok adımlı akıl yürütme ister). Zayıf: SHELL_EXECUTE %39, FILE_EDIT %47, FILE_READ %56 (test'te 18–28 örnek; teacher'lı veri bekler).
 - **Yürütme** (action başına 40 örnek, 384 kayıt): JSON + şema geçerli %83.3; WEB_SEARCH %97.5 doğru, FILE_READ / FILE_SEARCH / FILE_LIST / CALCULATE çıktılarının %100'ü şemaya uygun; açık araçlar şema %90, birebir %45; CODE_EXECUTE kodlarının %100'ü Python olarak derlenir. CALCULATE anlamsal doğruluk (ifade sonucu eşit) %42.5: kelime problemlerinde yanlış ara adım. Uzun içerikte greedy tekrar döngüsü: 3,072 token sınırına takılan 64 çıktının 60'ı FILE_CREATE / FILE_EDIT / SHELL_EXECUTE (Hunter; hedef istekten çıkarılamaz).
 - **Yargı** (action başına 30 örnek, 219 kayıt), aynı kayıtlarda DPO base ile: JSON / iç biçim sızıntısı %38 → **%0**, gözlemde olmayan sayı %17.5 → %10.6, İngilizce %5.9 → %2.3, referansla kelime F1 0.16 → 0.53, uzunluk / referans 6.6× → ~1×. 12 genel sohbet sorusunda DPO base Yargı biçiminde 11 kez sahte `<tool_observations>` üretir, Yargı hepsini düzgün cevaplar; bilgi hataları sürer (0.8B sınırı). Test örnekleminde hata observation'ı yok: "hatayı kabul etme" ölçülemedi (teacher'lı adım).
-- Açık: Yürütme ve Yargı için runtime'da tekrar cezası / `max_tokens`; FINISH ↔ CALCULATE için hesap zincirlerinin incelenmesi; `.mercan` export ve uçtan uca CLI denemesi.
+
+### `.mercan` export ve uçtan uca runtime (0.12, 2026-10-25)
+
+Export: `training/export_mercan.slurm` (arf debug, CPU, rol başına ~35 sn) → F16, Q8_0, Q4_K_M; `mercan_export/sop_roles_20261025_esc/<rol>/Mercan-0.8B-SoP-<Rol>-mix<v>-<quant>.mercan` (+ manifest, `SHA256SUMS`). Hiçbir yere yüklenmez.
+
+- **Ters bölü hatası (tüm `.mercan` dosyaları):** libmercan'ın llama fork'u NedoLM token parçalarını RWKV vocab'ı gibi çözer (`llama_unescape_rwkv_token`); dönüştürücü ham bayt yazdığı için tek `\` token'ı (id 95, vocab'da ters bölü içeren tek parça) boş çıkar ve Yürütme'nin JSON kaçışlarının hepsi kaybolur (`"a\nb"` → `"anb"`). `training/mercan_convert_escaped.py` dönüştürücüyü parçalardaki `\`'ı ikileyerek çalıştırır; encode etkilenmez (NDSRF004 dış encoder). Aynı dönüştürücüyle üretilmiş eski Mercan export'ları (DPO / Final Q4 dahil) bu hatayı taşır.
+- **Biçim paritesi:** libmercan'ın sohbet biçimi eğitimle aynıdır (BOS yok, `<|im_start|>rol\niçerik<|im_end|>\n`); rol başlığı ve içeriği birlikte ya da ayrı tokenize etmek 300 Yargı test kaydında aynı id'leri verir. F16 libmercan, bf16 PyTorch'un greedy çıktısını birebir üretir.
+- **Kuantizasyon** (`training/runtime_parity.py`, yerel RTX 4050, aynı test kayıtlarında PyTorch üretimiyle):
+
+| Rol | Biçim | PyTorch'la aynı çıktı | Skor (libmercan / PyTorch) |
+|---|---|---:|---|
+| Yasama | Q4_K_M | %99.1 (1,238 kayıt) | doğruluk %92.0 / %92.25 |
+| Yürütme | Q4_K_M | %42.3 (208) | şema %90.9 / %88.9, doğru %37.0 / %36.1 |
+| Yargı | Q4_K_M | %33.8 (219) | İngilizce %4.1 / %2.3, F1 0.522 / 0.535; "Merhaba, nasılsın?" → "Rica ederim!" |
+| Yargı | Q8_0 | %68.9 (219) | İngilizce %2.3 / %2.3, F1 0.538 / 0.535 |
+
+  Seçim: Yasama ve Yürütme Q4_K_M (506 MB), Yargı Q8_0 (876 MB) — `sop.libmercan.example.json`.
+- **Üretim ayarları** (`prompt_style: "trained"`, `default_generation_config`; `roles.<rol>.generation` ile alan alan ezilir): Yürütme `max_tokens` 3072, tekrar cezası 1.05 — eval taraması (384 kayıt): 1.0 / 1.05 / 1.1 / 1.15 → şema %83.3 / **%90.4** / %93.8 / %96.4, doğru %32.3 / **%32.3** / %31.5 / %31.0, kesilen 64 / 37 / 24 / 14; 1.1'den sonra yol ve alanlar bozulur. Yargı `max_tokens` 1024 (test cevaplarının p99'u ~2.7k karakter), greedy, ceza yok: 1.05 / 1.1 gözlemde olmayan sayı oranını %10.6'dan %13.2 / %14.3'e çıkarır (rakamlar da cezalanır). Yargı'nın 512 token'da kesilen 41 cevabının 23'ü döngüdür; `trim_trailing_loop` sona kadar süren döngüyü tek kopyaya indirir (219 kayıtta 24 cevap kırpılır, hepsi kesilmiş olanlardan). libmercan prompt + `max_tokens` > `n_ctx`'i reddettiği için `n_ctx` verilmezse 8192 + `max_tokens`.
+- **Runtime bilgisi:** eğitilmiş Yargı `RUNTIME_INFO` bloğunu hiç görmedi; blokla "hangi araçları kullanıyorsun?" sorusuna yerel model yollarını araç diye sayar. `prompt_style: "trained"`'de gönderilmez.
+- **Uçtan uca CLI** (yerel, SearXNG, Yasama Q4 / Yürütme Q4 / Yargı Q8; adım başına ~1.5–9 sn GPU): sohbet ve WEB_SEARCH doğru ("2025 asgari ücret" → 22.104 TL, kaynaktan); FILE_LIST / FILE_READ / FILE_SEARCH / FILE_CREATE / CODE_EXECUTE doğru seçilir ve argümanlar şemaya uyar. Hatalar:
+  - Yasama kısa günlük hesapları ("1250 lirayı 8 kişiye bölersek…", "1250 / 8 işlemini hesapla") RESPOND'a yollar, Yargı yanlış hesaplar (150). CALCULATE verisi neredeyse yalnız `arac_kullanimi` kelime problemleridir; kısa Türkçe hesap isteği yoktur (combined_v2'de "100'ün yarısı" RESPOND etiketli 8 kayıt önemsiz).
+  - Yürütme "Python dosyalarını listele"de `pattern` vermez; "1'den 10'a kareleri yazdır" için Jupyter keşif kodu üretir (`sys.executable_name`).
+  - Yargı gerçek gözlemlerde zayıf: dosya adlarını değiştirir (`yurutme/` → `yürütme/`, `sop.json` → `sops.json`), FILE_READ özetinde uydurur, FILE_SEARCH'e "Uygulanamaz", çalıştırılamayan CODE_EXECUTE'a "Geçerli Değil" der; "araç yapılandırılmamış" hatasını bazen doğru bazen çelişkili anlatır (hata observation'ı eğitimde yok). "Hangi araçları kullanabiliyorsun?" → "OpenAI'nin GPT-3 modeli" (kimlik verisi yok).
+- **Yargı verisinde gürültü** (mix/v2 train, 81,374): hedefi etiket olan 1,185 kayıt (combined_v2 Jupyter CODE_EXECUTE: "Uygulanamaz" 653, "Not Applicable" 318, "Geçerli Değil" 214), yarım kalmış "Bu nedenle X" 245 (`tool-math`), çıplak sayı 2,686 (combined_v2 CODE_EXECUTE). "Uygulanamaz" / "Geçerli Değil" cevapları buradan gelir.
+- Açık: Yargı hedef filtresi (etiket / yarım / çıplak sayı) ve yeniden eğitim; kısa Türkçe CALCULATE istekleri (şablonla teacher'sız üretilebilir); FINISH ↔ CALCULATE zincirleri; teacher'lı adım (hata observation'ları, dosya adlarını aynen aktarma, kimlik, FILE_LIST pattern'i).
 
 ---
 
@@ -1101,6 +1125,10 @@ Bu kontrollerden biri belirsizse eğitim veya runtime değişikliğini doğrudan
 ---
 
 # 17. Değişiklik Kaydı
+
+## 0.12 — 2026-10-25
+
+- §12: `.mercan` export (F16 / Q8_0 / Q4_K_M) ve ters bölü düzeltmesi (`mercan_convert_escaped.py`); libmercan paritesi ve kuantizasyon seçimi (Yasama / Yürütme Q4_K_M, Yargı Q8_0); eğitilmiş roller için üretim ayarları (Yürütme ceza 1.05 / 3072 token, Yargı greedy / 1024 token + döngü kırpma), `n_ctx` = 8192 + `max_tokens`; eğitilmiş Yargı'ya runtime bilgisi gönderilmez; uçtan uca CLI bulguları ve Yargı verisindeki gürültü.
 
 ## 0.11 — 2026-10-24
 

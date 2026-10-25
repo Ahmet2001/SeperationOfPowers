@@ -9,7 +9,7 @@
     },
     "yurutme": {
       "backend": "libmercan",
-      "model": "/models/Mercan-0.8B-SoP-Yurutme-mixv2-Q8_0.mercan",
+      "model": "/models/Mercan-0.8B-SoP-Yurutme-mixv2-Q4_K_M.mercan",
       "prompt_style": "trained",
       "threads": 2,
       "device": "auto"
