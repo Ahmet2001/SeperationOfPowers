@@ -1,0 +1,26 @@
+{
+  "roles": {
+    "yasama": {
+      "backend": "libmercan",
+      "model": "/models/Mercan-0.8B-SoP-Yasama-mixv3-Q4_K_M.mercan",
+      "prompt_style": "trained",
+      "threads": 2,
+      "device": "auto"
+    },
+    "yurutme": {
+      "backend": "libmercan",
+      "model": "/models/Mercan-0.8B-SoP-Yurutme-mixv2-Q4_K_M.mercan",
+      "prompt_style": "trained",
+      "threads": 2,
+      "device": "auto"
+    },
+    "yargi": {
+      "backend": "libmercan",
+      "model": "/models/Mercan-0.8B-SoP-Yargi-mixv2-Q8_0.mercan",
+      "prompt_style": "trained",
+      "threads": 2,
+      "device": "auto"
+    }
+  },
+  "pipeline": {"max_steps": 12, "tool_registry": null, "executor": null}
+}
