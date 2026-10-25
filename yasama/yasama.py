@@ -271,6 +271,11 @@ def request_message(
 InferenceFn = Callable[[dict[str, Any]], str]
 
 
+def default_generation_config(*, trained: bool = False) -> GenerationConfig:
+    """Greedy and short: the answer is one action name."""
+    return GenerationConfig(max_tokens=16, temperature=0.0, top_p=1.0, top_k=1, repeat_penalty=1.0)
+
+
 class YasamaRuntime:
     """Owns Yasama inference and validates its single-action output."""
 
@@ -288,13 +293,7 @@ class YasamaRuntime:
         self._backend = backend
         # A fine-tuned checkpoint gets its training prompt and no few-shot turns.
         self._trained = trained
-        self._generation_config = generation_config or GenerationConfig(
-            max_tokens=16,
-            temperature=0.0,
-            top_p=1.0,
-            top_k=1,
-            repeat_penalty=1.0,
-        )
+        self._generation_config = generation_config or default_generation_config(trained=trained)
 
     def run(
         self,

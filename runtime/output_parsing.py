@@ -127,3 +127,45 @@ def unwrap_natural_language_response(raw: str) -> str:
             return rendered
 
     return text
+
+
+_WORD = re.compile(r"\S+\s*")
+LOOP_MIN_REPEATS = 3
+LOOP_MAX_UNIT_WORDS = 40
+LOOP_MIN_CHARS = 20
+
+
+def trim_trailing_loop(text: str) -> str:
+    """Cut a greedy decoding loop that runs to the end of the text (the model
+    hit max_tokens repeating itself), keeping the repeated unit once.
+
+    A unit of up to LOOP_MAX_UNIT_WORDS words repeated LOOP_MIN_REPEATS+ times
+    must reach the end; the last word may be a cut-off copy. Repetition in the
+    middle of an answer is left alone."""
+    words = _WORD.findall(text)
+    keys = [word.strip().casefold() for word in words]
+    best: tuple[int, int] | None = None  # (loop start, unit size) of the longest loop
+    for tail_cut in (0, 1):
+        end_all = len(keys) - tail_cut
+        if tail_cut and (not keys or not keys[-1]):
+            continue
+        for size in range(1, LOOP_MAX_UNIT_WORDS + 1):
+            for partial in range(size):
+                end = end_all - partial
+                if end - size * LOOP_MIN_REPEATS < 0:
+                    break
+                unit = keys[end - size:end]
+                if keys[end:end_all] != unit[:partial]:
+                    continue
+                if tail_cut and not unit[partial].startswith(keys[-1]):
+                    continue
+                start = end - size
+                while start - size >= 0 and keys[start - size:start] == unit:
+                    start -= size
+                repeats = (end - start) // size
+                if repeats >= LOOP_MIN_REPEATS and len("".join(words[start:])) >= LOOP_MIN_CHARS:
+                    if best is None or start < best[0]:
+                        best = (start, size)
+    if best is None:
+        return text
+    return "".join(words[:best[0] + best[1]]).rstrip(" \t\n-*,;|")

@@ -184,6 +184,24 @@ def request_message(
 InferenceFn = Callable[[dict[str, Any]], Mapping[str, Any] | str]
 
 
+# Trained-checkpoint generation (default_generation_config). Penalty from
+# training/eval_role.py --repeat-penalty on mix/v2 test (384 records): 1.05
+# raises schema-valid outputs 83.3% -> 90.4% (truncated 64 -> 37) at the same
+# 32.3% correct; 1.1 / 1.15 start to break paths and fields (31.5% / 31.0%).
+TRAINED_MAX_TOKENS = 3072
+TRAINED_REPEAT_PENALTY = 1.05
+
+
+def default_generation_config(*, trained: bool = False) -> GenerationConfig:
+    """Greedy. A trained checkpoint writes whole FILE_CREATE contents (up to
+    ~3k tokens in training) and loops without a repeat penalty in
+    FILE_CREATE / FILE_EDIT / SHELL_EXECUTE (PROJECT_MASTER §12)."""
+    if trained:
+        return GenerationConfig(max_tokens=TRAINED_MAX_TOKENS, temperature=0.0, top_p=1.0, top_k=1,
+                                repeat_penalty=TRAINED_REPEAT_PENALTY, repeat_last_n=64)
+    return GenerationConfig(max_tokens=512, temperature=0.0, top_p=1.0, top_k=1, repeat_penalty=1.0)
+
+
 class YurutmeRuntime:
     """Owns Yurutme inference and returns a JSON-compatible arguments object."""
 
@@ -201,13 +219,7 @@ class YurutmeRuntime:
         self._backend = backend
         # A fine-tuned checkpoint gets its training prompt and no few-shot turns.
         self._trained = trained
-        self._generation_config = generation_config or GenerationConfig(
-            max_tokens=512,
-            temperature=0.0,
-            top_p=1.0,
-            top_k=1,
-            repeat_penalty=1.0,
-        )
+        self._generation_config = generation_config or default_generation_config(trained=trained)
 
     def run(
         self,

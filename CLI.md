@@ -245,6 +245,32 @@ mercan-sop chat \
   --set roles.yargi.library=/opt/mercan/lib/libmercan.so
 ```
 
+## Fine-tuned role checkpoints
+
+The role checkpoints trained on the SoP mix (`Mercan-0.8B-SoP-*.mercan`,
+exported with `training/export_mercan.slurm`) need
+`"prompt_style": "trained"` on each role: the runtime then sends the role's
+training system prompt and no few-shot turns (`sop.libmercan.example.json`).
+The trained style also selects the generation settings the checkpoints were
+evaluated with:
+
+| Role | max_tokens | decoding | repeat_penalty |
+|---|---:|---|---:|
+| yasama | 16 | greedy | 1.0 |
+| yurutme | 3072 | greedy | 1.05 |
+| yargi | 1024 | greedy | 1.0 |
+
+Override single fields per role with `generation`, e.g.
+`--set 'roles.yargi.generation={"max_tokens": 512}'`. Without an explicit
+`n_ctx`, a libmercan role gets 8192 prompt tokens plus its `max_tokens`
+(libmercan rejects prompt + max_tokens > n_ctx). Yargi cuts a decoding loop
+that runs to the end of its answer, and the trained Yargi is not sent the
+runtime-info block it never saw in training.
+
+Exports made before `training/mercan_convert_escaped.py` decode the backslash
+token to nothing, so every JSON escape in Yurutme's output is lost; re-export
+such files.
+
 ## Web search and page reading (SearXNG)
 
 `WEB_SEARCH` and `WEB_OPEN` run through EthosoftLib's `ethosoftlib.web` client

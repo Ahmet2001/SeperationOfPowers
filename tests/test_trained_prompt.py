@@ -47,7 +47,9 @@ class TrainedPromptTests(unittest.TestCase):
         self.assertEqual(len(backend.last_messages), 2)
 
         backend = FakeBackend("Merhaba!")
-        YargiRuntime(backend=backend, trained=True).run(user_prompt="Merhaba", conversation_history=[], observations=[])
+        yargi = YargiRuntime(backend=backend, trained=True)
+        yargi.set_runtime_info({"roles": {"yargi": {"backend": "libmercan", "model": "/m.mercan"}}})
+        yargi.run(user_prompt="Merhaba", conversation_history=[], observations=[])
         self.assertEqual(backend.last_messages[0], yargi_module.system_message())
         self.assertEqual(len(backend.last_messages), 2)
 
@@ -69,6 +71,21 @@ class TrainedPromptTests(unittest.TestCase):
         self.assertTrue(pipeline.yargi._trained)
         self.assertFalse(pipeline.yasama._trained)
         config["roles"]["yasama"]["prompt_style"] = "fine"
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
+            cli.build_runtime(config)
+
+    def test_cli_generation_follows_prompt_style_and_overrides(self):
+        config = json.loads(json.dumps(cli.DEFAULT_CONFIG))
+        config["roles"]["yurutme"]["prompt_style"] = "trained"
+        config["roles"]["yargi"]["generation"] = {"max_tokens": 100}
+        with patch.dict(os.environ, {}, clear=True):
+            pipeline, _ = cli.build_runtime(config)
+        self.assertEqual(pipeline.yurutme._generation_config, yurutme_module.default_generation_config(trained=True))
+        self.assertEqual(pipeline.yurutme._generation_config.max_tokens, yurutme_module.TRAINED_MAX_TOKENS)
+        self.assertEqual(pipeline.yargi._generation_config.max_tokens, 100)
+        self.assertEqual(pipeline.yargi._generation_config.temperature,
+                         yargi_module.default_generation_config().temperature)
+        config["roles"]["yargi"]["generation"] = {"max_token": 100}
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
             cli.build_runtime(config)
 

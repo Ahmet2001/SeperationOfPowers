@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib
 import json
 import os
@@ -19,10 +20,14 @@ from runtime.mail_clarification import (
     mentions_mail,
 )
 from runtime import LibMercanBackend, LlamaCppBackend, MercanCliBackend, OllamaBackend
+from runtime.backends import GenerationConfig
 from runtime.local_tools import BUILTIN_TOOL_REGISTRY
 from runtime.web_tools import WEB_ACTIONS, WebExecutor, searxng_url
+from yasama import yasama as yasama_role
 from yasama.yasama import YasamaRuntime
+from yargi import yargi as yargi_role
 from yargi.yargi import YargiRuntime
+from yurutme import yurutme as yurutme_role
 from yurutme.yurutme import YurutmeRuntime
 
 
@@ -56,9 +61,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 BACKEND_NAMES = ("ollama", "llamacpp", "mercan-cli", "libmercan")
 ROLE_NAMES = ("yasama", "yurutme", "yargi")
-# libmercan's own default is 4096. Observations reach Yurutme and Yargi
-# untruncated (PROJECT_MASTER §3.2), so roles get 8192; the Mercan/NedoLM
-# checkpoints declare a 32768-token context.
+# libmercan's own default is 4096 and it rejects prompt + max_tokens > n_ctx.
+# Observations reach Yurutme and Yargi untruncated (PROJECT_MASTER §3.2), so a
+# role's default n_ctx is an 8192-token prompt plus its max_tokens; the
+# Mercan/NedoLM checkpoints declare a 32768-token context.
 LIBMERCAN_DEFAULT_N_CTX = 8192
 # Executors that ship with the CLI and need no --executor hook.
 BUILTIN_EXECUTORS = frozenset({"local_readonly", "web"})
@@ -143,7 +149,7 @@ def _resolve_config(args: argparse.Namespace) -> dict[str, Any]:
     return config
 
 
-def _build_backend(role: str, config: Mapping[str, Any]):
+def _build_backend(role: str, config: Mapping[str, Any], *, max_tokens: int = 0):
     backend_name = str(config.get("backend", "")).strip().lower()
     model = config.get("model")
     if not model:
@@ -179,7 +185,7 @@ def _build_backend(role: str, config: Mapping[str, Any]):
             gpu_layers=_optional_int(config.get("gpu_layers")),
             use_mmap=_optional_bool(config.get("use_mmap")),
             check_tensors=_optional_bool(config.get("check_tensors")),
-            n_ctx=_optional_int(config.get("n_ctx")) or LIBMERCAN_DEFAULT_N_CTX,
+            n_ctx=_optional_int(config.get("n_ctx")) or LIBMERCAN_DEFAULT_N_CTX + max_tokens,
             n_batch=_optional_int(config.get("n_batch")),
             threads=_optional_int(config.get("threads")),
             threads_batch=_optional_int(config.get("threads_batch")),
@@ -208,6 +214,26 @@ def _trained_prompt(role: str, config: Mapping[str, Any]) -> bool:
             f"roles.{role}.prompt_style must be one of: {', '.join(PROMPT_STYLES)}."
         )
     return style == "trained"
+
+
+ROLE_MODULES = {"yasama": yasama_role, "yurutme": yurutme_role, "yargi": yargi_role}
+GENERATION_FIELDS = tuple(field.name for field in dataclasses.fields(GenerationConfig))
+
+
+def _generation_config(role: str, config: Mapping[str, Any], trained: bool) -> GenerationConfig:
+    """The role's default for its prompt style, with roles.<role>.generation
+    overriding single fields (e.g. {"max_tokens": 1024})."""
+    overrides = config.get("generation") or {}
+    if not isinstance(overrides, Mapping):
+        raise ValueError(f"roles.{role}.generation must be a JSON object.")
+    unknown = sorted(set(overrides) - set(GENERATION_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"roles.{role}.generation has unknown fields {unknown}; "
+            f"choose from: {', '.join(GENERATION_FIELDS)}."
+        )
+    default = ROLE_MODULES[role].default_generation_config(trained=trained)
+    return dataclasses.replace(default, **overrides)
 
 
 def _optional_int(value: Any) -> int | None:
@@ -280,11 +306,20 @@ def build_runtime(config: Mapping[str, Any]) -> tuple[AgentPipeline, list[Any]]:
     if not isinstance(roles, Mapping):
         raise ValueError("Config must contain a roles object.")
 
-    backends = {role: _build_backend(role, roles.get(role, {})) for role in ROLE_NAMES}
     trained = {role: _trained_prompt(role, roles.get(role, {})) for role in ROLE_NAMES}
-    yasama = YasamaRuntime(backend=backends["yasama"], trained=trained["yasama"])
-    yurutme = YurutmeRuntime(backend=backends["yurutme"], trained=trained["yurutme"])
-    yargi = YargiRuntime(backend=backends["yargi"], trained=trained["yargi"])
+    generation = {
+        role: _generation_config(role, roles.get(role, {}), trained[role]) for role in ROLE_NAMES
+    }
+    backends = {
+        role: _build_backend(role, roles.get(role, {}), max_tokens=generation[role].max_tokens)
+        for role in ROLE_NAMES
+    }
+    yasama = YasamaRuntime(backend=backends["yasama"], trained=trained["yasama"],
+                           generation_config=generation["yasama"])
+    yurutme = YurutmeRuntime(backend=backends["yurutme"], trained=trained["yurutme"],
+                             generation_config=generation["yurutme"])
+    yargi = YargiRuntime(backend=backends["yargi"], trained=trained["yargi"],
+                         generation_config=generation["yargi"])
 
     pipeline_cfg = config.get("pipeline", {})
     if not isinstance(pipeline_cfg, Mapping):

@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from runtime.backends import ChatBackend, GenerationConfig
-from runtime.output_parsing import unwrap_natural_language_response
+from runtime.output_parsing import trim_trailing_loop, unwrap_natural_language_response
 from runtime.serialization import serialize_yargi_input
 
 
@@ -153,6 +153,21 @@ def request_messages(
     ]
 
 
+# Trained-checkpoint generation (default_generation_config): greedy, as
+# training/eval_role.py measures it. 1024 tokens cover the test answers' p99
+# (~2.7k characters). No repeat penalty: 1.05/1.1 raised answers with
+# ungrounded numbers from 10.6% to 13.2%/14.3%; trim_trailing_loop cuts loops.
+TRAINED_MAX_TOKENS = 1024
+TRAINED_REPEAT_PENALTY = 1.0
+
+
+def default_generation_config(*, trained: bool = False) -> GenerationConfig:
+    if trained:
+        return GenerationConfig(max_tokens=TRAINED_MAX_TOKENS, temperature=0.0, top_p=1.0, top_k=1,
+                                repeat_penalty=TRAINED_REPEAT_PENALTY, repeat_last_n=64)
+    return GenerationConfig(max_tokens=768, temperature=0.2, top_p=0.95, top_k=40, repeat_penalty=1.05)
+
+
 class YargiRuntime:
     """Owns Yargi inference and returns the final natural-language response."""
 
@@ -172,13 +187,7 @@ class YargiRuntime:
         # A fine-tuned checkpoint gets its training prompt and no few-shot turns.
         self._trained = trained
         self._runtime_info = dict(runtime_info or {})
-        self._generation_config = generation_config or GenerationConfig(
-            max_tokens=768,
-            temperature=0.2,
-            top_p=0.95,
-            top_k=40,
-            repeat_penalty=1.05,
-        )
+        self._generation_config = generation_config or default_generation_config(trained=trained)
 
     def set_runtime_info(self, info: Mapping[str, Any]) -> None:
         """Supply actual configured role and tool information, not model guesses."""
@@ -197,7 +206,9 @@ class YargiRuntime:
             "observations": [dict(observation) for observation in observations],
         }
 
-        response = unwrap_natural_language_response(self._infer(payload))
+        # Greedy decoding can loop until max_tokens; a repeat penalty would
+        # also push grounded numbers away (PROJECT_MASTER §12).
+        response = trim_trailing_loop(unwrap_natural_language_response(self._infer(payload)))
         if not response:
             raise ValueError("Yargi produced an empty response.")
 
@@ -214,7 +225,10 @@ class YargiRuntime:
                 observations=payload["observations"],
             )
             messages = [
-                system_message(trained=self._trained, runtime_info=self._runtime_info),
+                # The trained checkpoint never saw RUNTIME_INFO; with it, it
+                # recited local model paths as "tools" (PROJECT_MASTER §12).
+                system_message(trained=self._trained,
+                               runtime_info=None if self._trained else self._runtime_info),
                 # With real history the model cannot tell example turns from
                 # the conversation and repeats example observations as facts.
                 *([] if self._trained or turns[:-1] else _few_shot_messages()),

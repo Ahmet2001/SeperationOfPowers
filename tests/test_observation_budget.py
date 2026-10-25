@@ -177,6 +177,12 @@ class ContextDefaultTests(unittest.TestCase):
     def test_explicit_context_wins(self) -> None:
         self.assertEqual(self.build({"n_ctx": 16384})["n_ctx"], 16384)
 
+    def test_context_leaves_room_for_the_output(self) -> None:
+        # libmercan rejects prompt + max_tokens > n_ctx.
+        with patch("cli.LibMercanBackend") as backend:
+            cli._build_backend("yurutme", {"backend": "libmercan", "model": "/m.mercan"}, max_tokens=3072)
+        self.assertEqual(backend.call_args.kwargs["n_ctx"], 8192 + 3072)
+
 
 if __name__ == "__main__":
     unittest.main()
