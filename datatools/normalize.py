@@ -461,6 +461,23 @@ def clean_response(response: Any) -> str:
     return text
 
 
+# Yargi targets that are not an answer to the user (mix/v2 train: combined_v2
+# Jupyter labels 1,185, bare numbers 2,686; tool-math "Bu nedenle X" 245). The
+# end-to-end CLI answered "Uygulanamaz" / "Geçerli Değil" (PROJECT_MASTER §12).
+LABEL_ANSWERS = frozenset({"Uygulanamaz", "Not Applicable", "Geçerli Değil", "N/A"})
+_TRUNCATED_ANSWER = re.compile(r"Bu nedenle,?(\s+\S+)?\.?")
+_BARE_NUMBER = re.compile(r"-?[\d.,]+")
+
+
+def check_answer_form(text: str) -> None:
+    if text in LABEL_ANSWERS:
+        raise Reject("response_label")
+    if _TRUNCATED_ANSWER.fullmatch(text):
+        raise Reject("response_truncated")
+    if _BARE_NUMBER.fullmatch(text):
+        raise Reject("response_bare_number")
+
+
 def _significant_digits(token: str) -> int:
     return len(token.lstrip("-").replace(".", "").replace(",", "").lstrip("0"))
 

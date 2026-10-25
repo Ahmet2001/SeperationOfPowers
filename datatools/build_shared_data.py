@@ -34,6 +34,7 @@ from datatools.normalize import (
     check_record_length,
     canonical_action,
     check_calculation,
+    check_answer_form,
     check_numbers_against_results,
     clean_response,
     load_aliases,
@@ -50,12 +51,13 @@ from runtime.registry_export import CONTRACT_VERSION, REGISTRY_PATH
 from runtime.tool_validation import public_tool_schema
 from yargi.yargi import request_messages as yargi_request_messages
 from yasama.yasama import request_message as yasama_request_message
-from datatools import synth
+from datatools import short_calc, synth
 from yurutme.yurutme import request_message as yurutme_request_message
 
-DATASET_SCHEMA_VERSION = 5  # 2: open tools; 3: teacher-free RESPOND and history mixing;
+DATASET_SCHEMA_VERSION = 6  # 2: open tools; 3: teacher-free RESPOND and history mixing;
                             # 4: Yargi RESPOND only from short dpo answers and HelpSteer3 validation;
-                            # 5: Yasama STATE shows a data preview of the latest steps
+                            # 5: Yasama STATE shows a data preview of the latest steps;
+                            # 6: short_calc episodes; Yargi drops label / truncated / bare-number answers
 ROLES = ("yasama", "yurutme", "yargi")
 SPLITS = ("train", "validation", "test")
 TEST_SHARE, VALIDATION_SHARE = 0.02, 0.02
@@ -300,6 +302,7 @@ def yargi_record(row: dict[str, Any], source: str, ctx: Context):
         for index, o in enumerate(raw)
     ]
     response = clean_response(row.get("response"))
+    check_answer_form(response)
     results = [
         o["data"]["result"] for o in observations
         if o["action"] == "CALCULATE" and o["status"] == "success"
@@ -359,6 +362,10 @@ def role_inputs(root: Path, role: str, ctx: Context, limit: int | None):
         yield source, path.name, read_rows(path, limit)
     if role != "yurutme":
         yield "chat_respond", "dpo + Human-Like + HelpSteer3", chat_rows(root, role, limit)
+    calc = list(short_calc.episodes(limit or short_calc.EPISODES))
+    # Yurutme verifies a CALCULATE row against the episode's recorded results.
+    ctx.calc_results.update({item["source_id"]: [item["result"]] for item in calc})
+    yield short_calc.SOURCE, "templated everyday calculations", short_calc.rows(role, calc)
     yield "history_mix", "existing records + earlier turn", history_mix_rows(root, role, ctx, limit)
 
 

@@ -32,7 +32,8 @@ from yargi.yargi import system_message as yargi_system_message
 from yasama.yasama import system_message as yasama_system_message
 from yurutme.yurutme import system_message as yurutme_system_message
 
-MIX_VERSION = 3  # 2: short Yasama prompt, 8192-token limit; 3: from shared_data v6 (Yasama data previews)
+MIX_VERSION = 4  # 2: short Yasama prompt, 8192-token limit; 3: from shared_data v6 (Yasama data previews);
+                 # 4: shared_data v7 (short_calc, Yargi answer-form filter)
 ROLES = ("yasama", "yurutme", "yargi")
 SPLITS = ("train", "validation", "test")
 SYSTEM_MESSAGES = {
@@ -53,10 +54,15 @@ CAPS: dict[tuple[str, str], int] = {
     ("yasama", "CALCULATE/arac_kullanimi"): 30_000,
     ("yasama", "CODE_EXECUTE/combined_v2"): 10_000,
     ("yasama", "RESPOND/chat"): 40_000,
+    # short_calc FINISH steps are single-step and trivially final; more of
+    # them would push Yasama to FINISH after any calculation (§12 chains).
+    ("yasama", "CALCULATE/short_calc"): 8_000,
+    ("yasama", "FINISH/short_calc"): 4_000,
     # The query is the request verbatim in 99.6% of these.
     ("yurutme", "WEB_SEARCH/ms-marco"): 15_000,
     ("yurutme", "CALCULATE/arac_kullanimi"): 30_000,
     ("yurutme", "CODE_EXECUTE/combined_v2"): 10_000,
+    ("yurutme", "CALCULATE/short_calc"): 8_000,
     ("yargi", "WEB_SEARCH/ms-marco"): 30_000,
     ("yargi", "CALCULATE/arac_kullanimi"): 20_000,
     ("yargi", "CODE_EXECUTE/combined_v2"): 10_000,
